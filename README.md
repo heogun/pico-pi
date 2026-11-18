@@ -119,6 +119,9 @@ PICO8DATA/
 | `KEYMAP` | 키보드 레이아웃 (`us`, `uk`, `de`, `fr`, `jp106` …). 한국어 키보드는 `us` |
 | `WATCHDOG` | `on` (기본): 시스템이 멈추면 하드웨어 워치독이 재부팅 / `off` |
 | `HOTKEY` | `on` (기본): PICO-8 강제 재시작 단축키 사용 / `off` |
+| `PICO8_VERIFY` | `strict` (기본): 검증 목록에 있는 PICO-8만 설치 / `warn`: 목록에 없는 버전도 경고와 함께 설치. 파일이 손상되거나 변조된 경우는 항상 거부 |
+| `CPU_GOVERNOR` | 게임 중 CPU 클럭 정책: `performance` (기본) / `ondemand` / `schedutil` |
+| `DEBUG` | `off` (기본) / `on`: 시리얼 콘솔과 tty1에 root 셸 (문제 해결용, 재부팅 후 적용) |
 | `BLUETOOTH` | `on` (기본) / `off` |
 | `BT_PAIR_SECONDS` | 부팅 후 자동 페어링 시간(초, 기본 60). `0`이면 부팅 때 페어링하지 않음 |
 | `PICO8_ARGS` | PICO-8에 넘길 추가 옵션 |
@@ -131,7 +134,7 @@ PICO8DATA/
 - **콘솔 설정 화면:** 키보드 `Ctrl + Alt + S`, 게임패드 `SELECT`만 2초 → 아래 [설정 카트](#설정-카트).
 - **PICO-8 강제 재시작:** 키보드는 `Ctrl + Alt + Backspace`, 게임패드는 `SELECT + START`를 3초 누릅니다.
   PICO-8과 멈춘 wget을 종료하고 바로 다시 시작합니다(`EXIT_ACTION`과 상관없이 재시작). 기록은 `logs/pico8.log`에 남습니다.
-- 시리얼 콘솔(UART, Pi 5는 디버그 UART): `root` (비밀번호 없음)
+- 시리얼 콘솔(UART, Pi 5는 디버그 UART): 로그인 프롬프트가 없습니다. `DEBUG=on`일 때만 root 셸이 열립니다(아래 [보안](#보안))
 - PICO-8이 비정상 종료하면 `logs/pico8.log`에 기록하고 다시 시작합니다. 5초 안에 3번 연속 비정상 종료하면 로그를 보여주고 tty1에 로그인 셸을 띄웁니다.
 
 ## SD카드를 빼지 않고 쓰기
@@ -153,10 +156,12 @@ PICO8DATA/
 - 이 페이지에서 고친 설정은 바로 적용됩니다. Wi-Fi 설정은 Wi-Fi를 다시 연결하고, PICO-8 관련 설정은 PICO-8을 다시 시작합니다.
 
 ### 처음 Wi-Fi 설정 (설정용 AP)
-Wi-Fi 설정이 없거나 40초 안에 연결하지 못하고 유선 연결도 없으면, 콘솔이 **`PICO8-OS-xxxx`** 라는 공개 Wi-Fi를 엽니다.
+Wi-Fi 설정이 없거나 40초 안에 연결하지 못하고 유선 연결도 없으면, 콘솔이 **`PICO8-OS-xxxx`** 라는 **WPA2** Wi-Fi를 엽니다.
+비밀번호는 콘솔의 설정 카트 info 화면(`Ctrl+Alt+S` / 패드 `SELECT` 2초)과 PICO8DATA 드라이브의 `wifi-setup.txt`에 있습니다. 처음 부팅할 때 무작위로 만들어 상태 파티션에 보관합니다.
 폰으로 접속하면 어떤 주소로 가든 Wi-Fi 설정 페이지가 뜹니다(캡티브 포털). 네트워크를 고르고 비밀번호를 넣으면 콘솔이 그 네트워크에 연결하고 AP를 끕니다.
-- AP 모드에서는 웹 API가 Wi-Fi 설정 기능만 허용합니다(인증 없음).
+- AP 모드에서는 웹 API가 Wi-Fi 설정 기능만 허용합니다(AP 자체가 WPA2로 보호됨).
 - 설정된 네트워크가 잠시 꺼져 있어 AP 모드로 들어갔다면, AP에 접속한 기기가 없을 때 5분마다 원래 네트워크로 다시 연결을 시도합니다.
+- 접속한 기기 없이 30분이 지나면 AP를 끕니다(설정 카트의 Wi-Fi 메뉴로 다시 검색, 연결할 수 있음).
 - 내장 Wi-Fi가 없는 Pi 1/2는 유선 연결을 쓰면 됩니다.
 
 ### 설정 카트
@@ -202,7 +207,7 @@ PICOBOOT/
 
 1. **업데이트 파일:** 빌드할 때 `pico8os-<보드>-<버전>.pico8os-update`가 함께 나옵니다. tar 하나에 `manifest`, `manifest.sig`, `cmdline.txt.in`, `boot.tar.gz`, `rootfs.ext4.gz`가 들어 있습니다.
    `manifest`에는 보드, 버전, 각 파일의 sha256이 있고, 이 `manifest`만 ECDSA P-256으로 서명합니다.
-2. **설치(`pico8os-ota apply`):** 서명 → 보드 → 파일 해시 → 슬롯 크기를 확인합니다. 그다음 쓰지 않는 슬롯에 rootfs를 기록하고, 커널 파일을 `b.new/`에 풀어 `b/`로 바꿉니다. 마지막으로 `slot.txt`를 새 이름으로 쓴 뒤 바꿔치기합니다.
+2. **설치(`pico8os-ota apply`):** 서명 → 보드 → **버전(지금보다 새 버전만, 다운그레이드 거부)** → 파일 해시 → 슬롯 크기를 확인합니다. 그다음 쓰지 않는 슬롯에 rootfs를 기록하고, 커널 파일을 `b.new/`에 풀어 `b/`로 바꿉니다. 마지막으로 `slot.txt`를 새 이름으로 쓴 뒤 바꿔치기합니다.
 3. **확인과 되돌리기:** 새 슬롯으로 부팅할 때마다 `S06ota`가 시도 횟수를 셉니다. PICO-8 세션이 45초 이상 돌면 `S99otagood`이 확정합니다. 3번 안에 확정되지 않으면 이전 슬롯으로 `slot.txt`를 되돌리고 재부팅합니다.
 4. **설치 경로:**
    - 웹 업데이트 탭에 파일 올리기
@@ -244,6 +249,42 @@ SDL이 처리하지 못하는 패드는 커널 드라이버 경로로 계속 동
 - 블루투스가 안정적으로 동작하도록 PL011 UART를 블루투스에 돌려주고(`miniuart-bt` 오버레이 제거), 시리얼 콘솔은 mini UART(`serial0`, `enable_uart=1`)로 옮겼습니다.
 - Pi 0/1/2처럼 블루투스가 내장되지 않은 보드는 USB 블루투스 동글(`btusb`)을 쓰면 됩니다. Broadcom 칩이 아닌 동글은 펌웨어가 따로 필요할 수 있습니다.
 - 강제 재시작 단축키(`SELECT + START` 3초)는 SELECT/START를 `BASE3`/`BASE4`로 보내는 범용 패드에서도 동작합니다.
+
+## 보안
+
+| 영역 | 방식 |
+|---|---|
+| 권한 분리 | PICO-8은 일반 계정 `pico`로 실행합니다(화면, 렌더, 입력, 오디오 장치만 사용 가능). 웹 서버와 CGI도 일반 계정 `www`로 실행합니다(busybox httpd `-u www`). root 권한이 필요한 동작(재부팅, Wi-Fi, 블루투스, OTA, 설정 적용)은 `pico8os-agent`(root)가 정해진 명령만 받아 처리합니다. 명령마다 인자를 검사하고, 통로는 `/run/pico8os/priv`(root:www 0730)입니다. `pico`는 `www` 그룹에 없어서, 카트는 이 통로에 접근할 수 없습니다 |
+| 로그인 | root 비밀번호 로그인과 로그인 프롬프트(getty)가 없습니다. `DEBUG=on`일 때만 시리얼 콘솔과 tty1에 root 셸이 열립니다(`pico8os-debugsh`) |
+| 웹 CSRF | 상태를 바꾸는 요청은 모두 POST에 `X-Pico8os: 1` 헤더가 있어야 받습니다. 다른 사이트는 CORS 사전 확인 없이 이 헤더를 보낼 수 없고, 이 서버는 사전 확인을 허용하지 않습니다. 브라우저가 보내는 `Origin`도 콘솔 주소와 같아야 합니다 |
+| DNS 리바인딩 | 웹 API는 `Host`가 IP 주소나 `pico8os`/`pico8os.local`일 때만 응답합니다 |
+| 설정 카트 | 카트가 보내는 요청은 시스템이 설정 카트를 띄웠을 때(단축키나 웹)만 받습니다. 웹 비밀번호가 들어 있는 상태 카트도 그때만 만듭니다. 그래서 인터넷에서 받은 카트는 설정을 바꾸거나 비밀번호를 읽을 수 없습니다. 심볼릭 링크로 된 요청 파일은 거부합니다 |
+| OTA | ECDSA P-256 서명 확인, 보드 확인, **다운그레이드 거부**, 3회 부팅 실패 시 자동 롤백 |
+| PICO-8 파일 검증 | Lexaloffle은 체크섬을 공개하지 않습니다. 그래서 이 프로젝트가 **검증된 빌드의 파일별 SHA-256 목록**(`pico8-hashes.txt`)을 OTA 키로 서명해 관리합니다. 이미지에 목록 사본이 들어 있고, 콘솔이 GitHub에서 최신 목록을 받아 서명을 확인한 뒤에만 사용합니다. 설치할 때 zip CRC(압축 해제), ELF 형식과 CPU 종류(32비트 ARM / AArch64), 버전, 파일 해시를 확인합니다. **변조되거나 손상된 파일은 항상 거부**하고, 목록에 없는 버전은 `PICO8_VERIFY`에 따라 처리합니다. 이미지에 PICO-8을 미리 넣을 때도 같은 검사를 거칩니다 |
+| 설정용 AP | WPA2(무작위 비밀번호), 30분 동안 접속한 기기가 없으면 꺼짐 |
+| 저장소 | 시스템 읽기 전용, PICO8DATA는 `pico`(소유자)와 `www`(그룹)만 접근, 그 외 계정은 읽기도 불가 |
+| 공격 표면 | 열려 있는 포트는 웹(80) 하나뿐입니다. dnsmasq는 설정용 AP일 때만 실행합니다. 커널에서 쓰지 않는 서브시스템(네트워크 필터, 원격 파일시스템, 미디어 등)은 뺐습니다 |
+
+**PICO-8 검증 목록에 새 버전 추가하기:** Lexaloffle에서 직접 받은 zip으로 아래처럼 실행한 뒤 `pico8-hashes.txt`와 `.sig`를 커밋합니다. 콘솔은 다음 확인 때 새 목록을 받아 씁니다.
+
+```bash
+scripts/pico8-hashes.sh add pico-8_0.2.8_raspi.zip
+```
+
+```bash
+scripts/pico8-hashes.sh sign
+```
+
+**하지 않은 것:**
+- Pi 4/5의 하드웨어 보안 부팅(secure boot): 보드 OTP에 한 번 쓰면 되돌릴 수 없어서 자동으로 켜지 않습니다.
+- 웹 HTTPS, 비밀번호 대입 시도 제한, 커널 하드닝(sysctl): 다음 단계로 남겼습니다.
+
+## 부팅 속도
+
+- **2단계 부팅:** `rcS`는 S00–S20만 실행합니다(데이터 마운트, OTA 부팅 확인, udev, 워치독, 단축키). 곧바로 PICO-8을 띄우고, 나머지(네트워크, Wi-Fi, 블루투스, 웹, 시간 동기화, 상태 감시)는 `rc.late`가 **동시에** 뒤에서 시작합니다. 빌드할 때 post-build가 S21 이상을 `/etc/init.d/late/`로 옮깁니다.
+- **커널:** 쓰지 않는 서브시스템을 빼서 모듈이 절반으로 줄었습니다. 화면 드라이버 vc4와 사운드 코어는 커널에 직접 넣습니다(`linux-fastboot.fragment`). 커널 의존성 때문에 넣지 못하면 모듈로 남고, 빌드 로그에 결과가 나옵니다.
+- **측정:** 부팅마다 `logs/boot.log`에 커널 부팅 시간(init 시작 시각)과 PICO-8 시작 시각을 남깁니다(최근 50회).
+- **실행 속도:** 게임 중 CPU 정책을 `performance`로 둡니다(`CPU_GOVERNOR`). 발열이나 전원 부족 때 펌웨어가 클럭을 낮추는 것은 그대로입니다.
 
 ## 안정성 (PICOPi에서 프리징이 나던 원인과 대책)
 
@@ -302,7 +343,9 @@ external/                     BR2_EXTERNAL (name: PICO8OS)
     etc/init.d/S49ntp         시간 동기화 (RTC 없음 → HTTPS용)
     etc/init.d/S60healthmon   커널 경고를 logs/kernel.log에 기록
     etc/init.d/S45btpair      블루투스 끄기 / 부팅 후 자동 페어링 창
-    etc/init.d/S70hotkey      강제 재시작 / 페어링 단축키 데몬 시작
+    etc/init.d/S16hotkey      강제 재시작 / 페어링 / 설정 단축키 데몬 시작
+    etc/init.d/rc.late        2단계 부팅: S21 이상을 PICO-8과 동시에 시작
+    usr/sbin/pico8os-debugsh  시리얼 콘솔 (DEBUG=on일 때만 root 셸)
     usr/bin/pico8-btpair      주변 게임패드 자동 페어링
     etc/bluetooth/            BlueZ 설정 (AutoEnable, 재연결, ClassicBondedOnly=false)
     etc/wgetrc                Splore 다운로드 타임아웃
@@ -319,6 +362,9 @@ external/                     BR2_EXTERNAL (name: PICO8OS)
   package/pico8-hotkey/       단축키 데몬 (C, evdev, 키보드/게임패드 핫플러그 지원)
   package/sdl-gamecontrollerdb/  SDL_GameControllerDB (커밋 고정, sha256 검증)
   boot-files/                 PICO8DATA에 처음 들어가는 pico8os.txt, README.txt
+pico8-hashes.txt(.sig)        검증된 PICO-8 빌드의 파일별 SHA-256 (OTA 키로 서명, scripts/pico8-hashes.sh)
+external/board/common/users.table   계정: pico(PICO-8), www(웹)
+external/board/rpi/linux-fastboot.fragment  화면 드라이버를 커널에 직접 넣음
 tools/gen-cart-lang.py        언어 카트 생성기 (make i18n)
 tools/gen-webfonts.py         웹 글꼴 부분 집합 생성기 (make webfonts)
 tools/i18n/                   설정 카트 문구(cart-strings.json), 키릴 문자 글리프
@@ -340,4 +386,5 @@ docker/Dockerfile, scripts/   Docker 빌드, QEMU 실행
   - 설정 카트: macOS용 PICO-8 헤드리스로 `printh`/`reload` 통신
   - 언어: 4개 언어(ko, zh, ja, ru) 설정 카트 화면을 PICO-8 헤드리스로 그려 확인, 웹 9개 언어 키 누락 검사
   실제 Pi에서의 `os_prefix` 슬롯 전환, genimage의 확장 파티션 생성, hostapd AP, busybox httpd 업로드는 빌드와 실기기에서 확인해야 합니다.
+- 보안·부팅 1차 변경(권한 분리, CSRF, 2단계 부팅, PICO-8 검증 등)은 이 Mac에서 스크립트 단위로만 시험했습니다(웹 API 요청 규칙, 에이전트 명령 검사, PICO-8 0.2.7 실제 파일 검증, inittab 변환). 실제 Pi에서 `pico` 계정으로 PICO-8이 화면, 입력, 소리를 정상적으로 쓰는지는 빌드 후 확인해야 합니다.
 - 앞으로 할 일: SSH, 게임패드 매핑(`gamecontrollerdb.txt`), 부팅 스플래시, 전원 버튼(GPIO) 종료.

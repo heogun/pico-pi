@@ -1,5 +1,5 @@
 #!/bin/sh
-# PICO8-OS web management UI (busybox httpd on port 80).
+# PICO8-OS web management UI (busybox httpd on port 80, running as www).
 #   pico8os-web start|stop|restart
 # Normal mode: everything behind HTTP basic auth (user "pico", password from
 # WEB_PASSWORD or /state/web-password, shown in the PICO8-OS settings cart).
@@ -12,7 +12,7 @@ CONF="$RUN/httpd.conf"
 
 start() {
 	mkdir -p "$RUN"
-	umask 077
+	umask 027
 	if [ -f "$RUN/ap-mode" ]; then
 		printf 'E404:%s/setup.html\n' "$WWW" > "$CONF"
 	else
@@ -21,7 +21,9 @@ start() {
 	# busybox httpd has no built-in type for web fonts
 	printf '.woff2:font/woff2\n.css:text/css\n' >> "$CONF"
 	umask 022
-	httpd -p 80 -h "$WWW" -c "$CONF" -r "PICO8-OS"
+	# httpd reads its config after dropping to www: root:www 0640
+	chown root:www "$CONF"; chmod 0640 "$CONF"
+	httpd -p 80 -u www -h "$WWW" -c "$CONF" -r "PICO8-OS"
 }
 
 stop() { killall httpd 2>/dev/null; sleep 0.2; }

@@ -318,6 +318,8 @@ function _draw()
    {T("i_login"),V(" pico / "..g("pw"))},
    {T("wifi"),V(" "),wifi_segs()[1],wifi_segs()[2]},
    {T("i_update"),V(" "),ota_segs(g("ota"))[1],ota_segs(g("ota"))[2]}}
+  -- setup access point: its wpa2 password instead of the update line
+  if g("appw")~="" then l[7]={T("password"),V(" "..g("appw"))} end
   for i=1,#l do draw_segs(l[i],2,3+i*11,7) end
   draw_segs({T("i_hint1")},1,96,6)
   draw_segs({T("i_hint2")},1,106,6)

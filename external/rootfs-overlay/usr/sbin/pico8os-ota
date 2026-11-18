@@ -20,8 +20,8 @@
 #   verifying | checking | writing VER SLOT | kernel SLOT | ready VER
 #   valid VER | updated VER | uptodate VER | available VER | downloading VER
 #   rolledback | error CODE [args]   (CODE: nofile notupdate unsigned badsig
-#   format board corrupt nofit write bootmount bootfiles nourl unreachable
-#   badlatest download)
+#   format board older corrupt nofit write bootmount bootfiles nourl
+#   unreachable badlatest download)
 . /usr/lib/pico8os/lib.sh
 load_config
 
@@ -63,6 +63,10 @@ verify() {
 	[ "$(manifest_get format "$WORK/manifest")" = 1 ] || die format
 	b=$(manifest_get board "$WORK/manifest")
 	[ "$b" = "$(os_board)" ] || die board "$b" "$(os_board)"
+	# No downgrades: an old (correctly signed) bundle could bring back fixed
+	# vulnerabilities. Going back to the previous system is "rollback".
+	v=$(manifest_get version "$WORK/manifest")
+	[ "$v" \> "$(os_version)" ] || die older "$v" "$(os_version)"
 	progress checking
 	for part in rootfs boot cmdline; do
 		case $part in rootfs) m=rootfs.ext4.gz ;; boot) m=boot.tar.gz ;; cmdline) m=cmdline.txt.in ;; esac

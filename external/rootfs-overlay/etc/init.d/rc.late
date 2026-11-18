@@ -1,0 +1,19 @@
+#!/bin/sh
+# Second boot phase, started by init ("::once") at the same time as the
+# PICO-8 session, so PICO-8 does not wait for networking, Bluetooth, the web
+# UI, time sync and the like. post-build moves every init script numbered
+# S21 and up into /etc/init.d/late/.
+#   rc.late start | stop
+case "$1" in
+	start)
+		for i in /etc/init.d/late/S??*; do
+			[ -x "$i" ] || continue
+			"$i" start
+		done ;;
+	stop)
+		for i in $(ls -r /etc/init.d/late/S??* 2>/dev/null); do
+			[ -x "$i" ] || continue
+			"$i" stop
+		done ;;
+esac
+exit 0

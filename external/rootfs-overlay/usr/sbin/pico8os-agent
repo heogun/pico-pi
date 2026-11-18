@@ -1,20 +1,27 @@
 #!/bin/sh
-# PICO8-OS agent: the bridge between the settings cart and the system.
+# PICO8-OS agent (root). Two jobs:
 #
-# The cart (carts/pico8os/pico8os.p8) appends requests with
-#   printh("<seq> <command>", "pico8os_req.txt")
-# and reads the answer from pico8os_status.p8, a cart whose sprite sheet
-# holds "key=value" text, via reload(). Both live in /run/pico8os/cart
-# (tmpfs, bind-mounted on carts/pico8os) so polling never writes the SD card.
+# 1. Settings cart bridge. The cart (carts/pico8os/pico8os.p8) appends
+#      printh("<seq> <command>", "pico8os_req.txt")
+#    and reads pico8os_status.p8, a cart whose sprite sheet holds
+#    "key=value" text, via reload(). Both live in /run/pico8os/cart (tmpfs,
+#    bind-mounted on carts/pico8os) so polling never writes the SD card.
+#    PICO-8 runs as the unprivileged pico user and also runs carts from the
+#    internet, so requests are only accepted, and the status (which contains
+#    the web password) is only written, while the settings cart was started
+#    by the system ($RUN/settings-active, set by pico8-session as root).
+#    Commands: refresh | set KEY VALUE | pair | wifi_scan | wifi IDX [PSK]
+#              ota_check | ota_install | restart | exit | reboot | poweroff
+#    Status "msg" is "<key> <arg>": the cart translates m_<key>; key "ota"
+#    carries an OTA status line ("<code> [args]") translated as o_<code>.
 #
-# Commands: refresh | set KEY VALUE | pair | wifi_scan | wifi IDX [PSK]
-#           ota_check | ota_install | restart | exit | reboot | poweroff
-# Status "msg" is "<key> <arg>": the cart translates m_<key> from its
-# language cart (lang_<code>.p8); key "ota" carries an OTA status line
-# ("<code> [args]", see pico8os-ota) that the cart translates as o_<code>.
+# 2. Privileged actions for the web UI (which runs as www): requests dropped
+#    into $RUN/priv (root:www 0730) by priv() in lib.sh; only the commands in
+#    priv_run are accepted, each with its arguments validated.
 . /usr/lib/pico8os/lib.sh
 CART_DIR="$RUN/cart"
 MNT="$DATA/carts/pico8os"
+ACTIVE_FLAG="$RUN/settings-active"
 MSG=""
 SEQ=0
 
@@ -28,6 +35,10 @@ gfx_encode() {
 }
 
 write_status() {
+	if [ ! -f "$ACTIVE_FLAG" ]; then
+		rm -f "$CART_DIR/pico8os_status.p8"   # no password for other carts
+		return
+	fi
 	load_config
 	ota=$(cat "$RUN/ota.status" 2>/dev/null)
 	[ -n "$ota" ] || ota="uptodate $(os_version)"
@@ -46,6 +57,7 @@ write_status() {
 		echo "web=${ip:+http://$ip}"
 		echo "pw=$(web_password)"
 		echo "wifi=$wifi"
+		echo "appw=$([ -f "$RUN/ap-mode" ] && ap_password)"
 		echo "nets=$(head -n 12 "$RUN/wifi-scan.txt" 2>/dev/null | tr '\n' '|')"
 		echo "bt=$(bluetoothctl devices Paired 2>/dev/null | cut -d' ' -f3- | head -n 6 | tr '\n' '|')"
 		echo "keymap=$KEYMAP"
@@ -59,6 +71,7 @@ write_status() {
 		printf 'pico-8 cartridge // http://www.pico-8.com\nversion 41\n__gfx__\n'
 		gfx_encode < "$CART_DIR/.status.txt"
 	} > "$CART_DIR/.pico8os_status.p8" && mv "$CART_DIR/.pico8os_status.p8" "$CART_DIR/pico8os_status.p8"
+	rm -f "$CART_DIR/.status.txt"
 }
 
 handle() {
@@ -69,16 +82,13 @@ handle() {
 		refresh) ;;
 		set)
 			k=$1; shift; v="$*"
-			if set_conf "$k" "$v"; then
-				MSG="saved"
-				# PICO-8 settings take effect when the settings cart exits
-				# (PICO-8 restarts then); system ones apply now.
-				case $k in WIFI_*|BLUETOOTH|HOTKEY|WEB_PASSWORD) pico8os-apply "$k" ;; esac
-			else MSG="error $k"; fi ;;
+			case $k in LANGUAGE|KEYMAP|PICO8_MODE|EXIT_ACTION) ;; *) MSG="error"; return ;; esac
+			if set_conf "$k" "$v"; then MSG="saved"; else MSG="error"; fi ;;
 		pair) ( pico8-btpair 90 >/dev/null 2>&1 & ); MSG="pairing" ;;
 		wifi_scan) pico8os-wifi scan >/dev/null 2>&1; MSG="scandone" ;;
 		wifi)
 			idx=$1; shift
+			case $idx in ''|*[!0-9]*) MSG="notfound"; return ;; esac
 			ssid=$(sed -n "${idx}p" "$RUN/wifi-scan.txt" 2>/dev/null)
 			if [ -z "$ssid" ]; then MSG="notfound"
 			else
@@ -92,32 +102,110 @@ handle() {
 		restart|exit) restart_pico8 ;;
 		reboot) reboot ;;
 		poweroff) poweroff ;;
-		*) MSG="error $cmd" ;;
+		*) MSG="error" ;;     # never echo request text back
 	esac
 }
 
+# Cart request files are written by the pico user: refuse anything that is
+# not a plain file (a symlink could point root at another file).
+take_cart_requests() {
+	for req in "$CART_DIR/pico8os_req.txt" "$DATA/carts/pico8os_req.txt"; do
+		[ -e "$req" ] || continue
+		if [ -L "$req" ] || [ ! -f "$req" ] || [ ! -f "$ACTIVE_FLAG" ]; then
+			rm -f "$req"; continue
+		fi
+		mv "$req" "$req.work" 2>/dev/null || continue
+		[ -L "$req.work" ] && { rm -f "$req.work"; continue; }
+		head -c 4096 "$req.work" | while IFS= read -r line || [ -n "$line" ]; do
+			printf '%s\n' "$line" | tr -d '\r'
+		done > "$RUN/.cart-req"
+		rm -f "$req.work"
+		while IFS= read -r line; do handle "$line"; done < "$RUN/.cart-req"
+		rm -f "$RUN/.cart-req"
+		write_status
+		active=60     # the cart is open: keep its status fresh for 30 s
+	done
+}
+
+valid_mac() { printf '%s' "$1" | grep -q -E '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'; }
+
+# priv_run REQFILE: one web UI request (line 1 = command, then arguments)
+priv_run() {
+	reqfile=$1
+	set --
+	while IFS= read -r l || [ -n "$l" ]; do set -- "$@" "$l"; done < "$reqfile"
+	cmd=${1:-}; [ $# -gt 0 ] && shift
+	case $cmd in
+		apply)
+			for k in "$@"; do
+				case " $CONF_KEYS " in *" $k "*) ;; *) echo "bad key"; return 2 ;; esac
+			done
+			pico8os-apply "$@" ;;
+		restart_pico8)
+			case ${1:-} in
+				'') restart_pico8 ;;
+				settings) restart_pico8 settings ;;
+				*) return 2 ;;
+			esac ;;
+		reboot) ( sleep 1; reboot ) >/dev/null 2>&1 & ;;
+		poweroff) ( sleep 1; poweroff ) >/dev/null 2>&1 & ;;
+		bt_list) bluetoothctl devices Paired ;;
+		bt_pair) ( pico8-btpair 90 >/dev/null 2>&1 & ) ;;
+		bt_remove) valid_mac "${1:-}" || return 2; bluetoothctl remove "$1" >/dev/null ;;
+		wifi_scan) pico8os-wifi scan ;;
+		wifi_restart) ( sleep 2; pico8os-wifi restart >/dev/null 2>&1 ) & ;;
+		ota_verify)
+			pico8os-ota verify "$DATA/ota/upload.pico8os-update" >/dev/null 2>&1; rc=$?
+			cat "$RUN/ota.status"; return $rc ;;
+		ota_apply)
+			f="$DATA/ota/upload.pico8os-update"
+			[ -f "$f" ] || f="$DATA/ota/download.pico8os-update"
+			[ -f "$f" ] || return 3
+			( pico8os-ota apply "$f" && rm -f "$f" && sync ) >/dev/null 2>&1 & ;;
+		ota_check) pico8os-ota check >/dev/null 2>&1; cat "$RUN/ota.status" ;;
+		ota_download)
+			( f=$(pico8os-ota download 2>/dev/null) && [ -n "$f" ] && pico8os-ota apply "$f" && rm -f "$f" ) >/dev/null 2>&1 & ;;
+		ota_rollback) pico8os-ota rollback >/dev/null 2>&1; cat "$RUN/ota.status" ;;
+		dmesg) dmesg | tail -n 200 ;;
+		*) echo "unknown command"; return 2 ;;
+	esac
+}
+
+take_priv_requests() {
+	for req in "$PRIV_DIR"/*.req; do
+		[ -f "$req" ] && [ ! -L "$req" ] || continue
+		id=${req%.req}
+		mv "$req" "$id.work" 2>/dev/null || continue
+		(
+			umask 022
+			priv_run "$id.work" > "$id.out" 2>&1
+			echo $? > "$id.done.tmp"
+			mv "$id.done.tmp" "$id.done"
+			rm -f "$id.work"
+		) &
+	done
+	# answers nobody fetched (client gave up)
+	find "$PRIV_DIR" -type f -mmin +10 -exec rm -f {} \; 2>/dev/null
+}
+
 setup() {
-	mkdir -p "$CART_DIR" "$MNT"
+	mkdir -p "$CART_DIR" "$MNT" "$PRIV_DIR"
 	cp /usr/share/pico8os/cart/*.p8 "$CART_DIR/"
+	chown pico:pico "$CART_DIR"       # PICO-8 (pico) writes its requests here
+	chown root:www "$PRIV_DIR"; chmod 0730 "$PRIV_DIR"
 	mountpoint -q "$MNT" || mount --bind "$CART_DIR" "$MNT"
 	write_status
 }
 
 setup
-n=0 active=0
+n=0 active=0 was_active=0
 while :; do
-	for req in "$CART_DIR/pico8os_req.txt" "$DATA/carts/pico8os_req.txt"; do
-		[ -s "$req" ] || continue
-		mv "$req" "$req.work" 2>/dev/null || continue
-		while IFS= read -r line || [ -n "$line" ]; do
-			handle "$(printf '%s' "$line" | tr -d '\r')"
-		done < "$req.work"
-		rm -f "$req.work"
-		write_status
-		active=60     # the cart is open: keep its status fresh for 30 s
-	done
-	# Refresh IP / Wi-Fi / OTA progress every 3 s, only while the cart polls
-	# (it sends "refresh" every few seconds); idle otherwise.
+	take_cart_requests
+	take_priv_requests
+	# Settings cart opened or closed: write / remove the status cart.
+	if [ -f "$ACTIVE_FLAG" ]; then now=1; else now=0; fi
+	[ "$now" != "$was_active" ] && { write_status; was_active=$now; active=60; }
+	# Refresh IP / Wi-Fi / OTA progress every 3 s while the cart polls.
 	n=$((n + 1))
 	if [ "$active" -gt 0 ]; then
 		active=$((active - 1))

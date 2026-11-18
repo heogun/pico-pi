@@ -4,6 +4,11 @@
 # so no multipart parsing is needed.
 # Replies carry a message code + argument ({"ok":..,"code":..,"arg":..});
 # the page translates api_<code> (and OTA status codes) via i18n.js.
+#
+# Runs as the unprivileged www user (httpd -u www). It reads and writes the
+# data partition itself (group picodata); everything that needs root goes
+# through priv (lib.sh) to pico8os-agent, which only runs whitelisted
+# commands. Every state change needs POST + "X-Pico8os: 1" (CSRF).
 . /usr/lib/pico8os/lib.sh
 load_config
 
@@ -20,6 +25,8 @@ ok() { reply true "$1" "${2:-}"; }
 fail() { printf 'Status: 400 Bad Request\r\n'; reply false "$1" "${2:-}"; }
 # OTA results: the code is "ota", the argument the OTA status line.
 ota_reply() { "$1" ota "$(cat "$RUN/ota.status" 2>/dev/null)"; }
+# priv_or_fail CMD...: run a privileged action; the request fails with it
+priv_or_fail() { priv "$@" >/dev/null 2>&1 || fail unknown_action; }
 
 urldecode() {
 	printf '%b' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/+/ /g' \
@@ -36,7 +43,7 @@ param() {
 	return 1
 }
 body() { head -c "${CONTENT_LENGTH:-0}"; }
-need_post() { [ "$REQUEST_METHOD" = POST ] || fail post_required; }
+need_post() { [ "$REQUEST_METHOD" = POST ] || fail post_required; }  # (also enforced globally below)
 
 # File names from the browser: one path component, no hidden files.
 safe_name() {
@@ -71,10 +78,31 @@ wifi_state() {
 }
 
 AP_ONLY="status wifi_scan wifi_set"
+READ_ONLY="status conf_get carts shots log bt_list wifi_scan"
 action=$(param a) || action=status
 if [ -f "$RUN/ap-mode" ]; then
 	case " $AP_ONLY " in *" $action "*) ;; *) fail ap_only ;; esac
+else
+	# DNS rebinding: only answer for the console's own address or name.
+	host=${HTTP_HOST%:*}
+	case $host in
+		''|localhost|pico8os|pico8os.local) ;;
+		*[!0-9.]*) fail bad_origin ;;   # not an IPv4 literal
+	esac
 fi
+# CSRF: anything that changes state must be a POST carrying X-Pico8os: 1
+# (a custom header a foreign web page cannot send without a CORS preflight,
+# which this server never grants) and, if the browser sends one, a matching
+# Origin. Read-only actions may be GET.
+case " $READ_ONLY " in
+	*" $action "*) ;;
+	*)
+		[ "$REQUEST_METHOD" = POST ] && [ "${HTTP_X_PICO8OS:-}" = 1 ] || fail post_required
+		if [ -n "${HTTP_ORIGIN:-}" ]; then
+			case $HTTP_ORIGIN in "http://$HTTP_HOST"|"https://$HTTP_HOST") ;; *) fail bad_origin ;; esac
+		fi
+		;;
+esac
 
 case $action in
 status)
@@ -84,6 +112,7 @@ status)
 		"$(json_str "$(os_version)")" "$(json_str "$(os_board)")" "$(json_str "$(current_slot)")" \
 		"$(json_str "$(current_ip)")" "$(json_str "$(wifi_state)")" \
 		"$([ -f "$RUN/ap-mode" ] && echo true || echo false)"
+	printf '"pico8_verify":%s,' "$(json_str "$(cat "$PICO8_DIR/.verify" 2>/dev/null)")"
 	printf '"pico8":%s,"uptime":%s,"data_free":%s,' \
 		"$(json_str "$(pico8_version)")" "$(json_str "$(uptime | sed 's/^.*up *//; s/, *load.*//')")" \
 		"$(json_str "$(df -h "$DATA" 2>/dev/null | awk 'NR==2{print $4}')")"
@@ -97,12 +126,12 @@ conf_put)
 	need_post
 	[ "${CONTENT_LENGTH:-0}" -le "$MAX_TEXT" ] || fail too_large
 	body > "$DATA/pico8os.txt.new" && mv "$DATA/pico8os.txt.new" "$DATA/pico8os.txt" && sync
-	pico8os-apply >/dev/null 2>&1
+	priv apply >/dev/null 2>&1
 	ok saved ;;
 set)
 	k=$(param k) || fail unknown_setting; v=$(param v)
 	set_conf "$k" "$v" || fail unknown_setting "$k"
-	pico8os-apply "$k" >/dev/null 2>&1
+	priv apply "$k" >/dev/null 2>&1
 	ok saved_key "$k" ;;
 carts)
 	hdr
@@ -136,7 +165,7 @@ log)
 	case $(param f) in
 		pico8) f=$DATA/logs/pico8.log ;; kernel) f=$DATA/logs/kernel.log ;;
 		ota) f=$DATA/logs/ota.log ;; bluetooth) f=$DATA/logs/bluetooth.log ;;
-		system) dmesg | tail -n 200 > "$RUN/dmesg.txt"; f=$RUN/dmesg.txt ;;
+		system) hdr text/plain; priv dmesg 2>/dev/null; exit 0 ;;
 		*) fail unknown_log ;;
 	esac
 	hdr text/plain; tail -n 200 "$f" 2>/dev/null ;;
@@ -145,22 +174,23 @@ pico8_put)
 	n=$(safe_name "$(param name)") || fail bad_name
 	case $n in pico-8*raspi*.zip) ;; *) fail expect_zip ;; esac
 	body > "$DATA/.$n.part" && mv "$DATA/.$n.part" "$DATA/$n" && sync
-	restart_pico8   # the session installs it on start
+	priv restart_pico8 >/dev/null 2>&1   # the session installs it on start
 	ok zip_installing "$n" ;;
 bt_list)
 	hdr
-	bluetoothctl devices Paired 2>/dev/null | awk '$1=="Device"{m=$2; $1=""; $2=""; sub(/^  /,""); print m "\t" $0}' | json_list; echo ;;
+	priv bt_list 2>/dev/null | awk '$1=="Device"{m=$2; $1=""; $2=""; sub(/^  /,""); print m "\t" $0}' | json_list; echo ;;
 bt_pair)
-	( pico8-btpair 90 >/dev/null 2>&1 & )
+	priv_or_fail bt_pair
 	ok pairing ;;
 bt_remove)
 	mac=$(param mac | tr -cd '0-9A-Fa-f:')
 	[ ${#mac} -eq 17 ] || fail bad_address
-	bluetoothctl remove "$mac" >/dev/null 2>&1
+	priv_or_fail bt_remove "$mac"
 	ok removed "$mac" ;;
 wifi_scan)
 	hdr
-	pico8os-wifi scan 2>/dev/null | json_list; echo ;;
+	if [ -f "$RUN/ap-mode" ]; then cat "$RUN/wifi-scan.txt" 2>/dev/null
+	else PRIV_TIMEOUT=20 priv wifi_scan 2>/dev/null; fi | json_list; echo ;;
 wifi_set)
 	need_post
 	[ "${CONTENT_LENGTH:-0}" -le 4096 ] || fail too_large
@@ -171,39 +201,34 @@ wifi_set)
 	[ -n "$psk" ] && { [ ${#psk} -ge 8 ] && [ ${#psk} -le 63 ] || fail psk_len; }
 	set_conf WIFI_SSID "$ssid" && set_conf WIFI_PSK "$psk" || fail quotes
 	[ -n "$country" ] && set_conf WIFI_COUNTRY "$(printf '%s' "$country" | tr -cd 'A-Za-z' | tr 'a-z' 'A-Z' | head -c 2)"
-	( sleep 2; pico8os-wifi restart >/dev/null 2>&1 ) &
+	priv wifi_restart >/dev/null 2>&1
 	ok connecting "$ssid" ;;
 ota_put)
 	need_post
 	mkdir -p "$DATA/ota"
 	body > "$DATA/ota/upload.pico8os-update.part" || fail upload_failed
 	mv "$DATA/ota/upload.pico8os-update.part" "$DATA/ota/upload.pico8os-update"; sync
-	if pico8os-ota verify "$DATA/ota/upload.pico8os-update" >/dev/null 2>&1; then
-		ota_reply ok
+	if st=$(PRIV_TIMEOUT=300 priv ota_verify); then
+		ok ota "$st"
 	else
-		rm -f "$DATA/ota/upload.pico8os-update"; ota_reply fail
+		rm -f "$DATA/ota/upload.pico8os-update"; fail ota "${st:-error}"
 	fi ;;
 ota_apply)
-	f="$DATA/ota/upload.pico8os-update"
-	[ -f "$f" ] || f="$DATA/ota/download.pico8os-update"
-	[ -f "$f" ] || fail no_update
-	( pico8os-ota apply "$f" >/dev/null 2>&1 && rm -f "$f" && sync ) &
+	priv ota_apply >/dev/null 2>&1 || fail no_update
 	ok installing ;;
 ota_check)
-	pico8os-ota check >/dev/null 2>&1
-	ota_reply ok ;;
+	ok ota "$(PRIV_TIMEOUT=60 priv ota_check 2>/dev/null)" ;;
 ota_download)
-	( f=$(pico8os-ota download 2>/dev/null) && [ -n "$f" ] && pico8os-ota apply "$f" && rm -f "$f" ) >/dev/null 2>&1 &
+	priv_or_fail ota_download
 	ok downloading ;;
 ota_rollback)
-	pico8os-ota rollback >/dev/null 2>&1
-	ota_reply ok ;;
+	ok ota "$(priv ota_rollback 2>/dev/null)" ;;
 power)
 	case $(param do) in
-		restart) restart_pico8; ok restarting ;;
-		settings) restart_pico8 settings; ok settings ;;
-		reboot) ( sleep 1; reboot ) & ok rebooting ;;
-		poweroff) ( sleep 1; poweroff ) & ok powering_off ;;
+		restart) priv_or_fail restart_pico8; ok restarting ;;
+		settings) priv_or_fail restart_pico8 settings; ok settings ;;
+		reboot) priv_or_fail reboot; ok rebooting ;;
+		poweroff) priv_or_fail poweroff; ok powering_off ;;
 		*) fail unknown_action ;;
 	esac ;;
 *)

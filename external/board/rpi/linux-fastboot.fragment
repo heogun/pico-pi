@@ -1,0 +1,9 @@
+# PICO8-OS: build the display driver into the kernel instead of loading it
+# as a module during udev coldplug, so the screen is ready sooner and
+# PICO-8's KMS wait is shorter. vc4 depends on the sound core (HDMI audio),
+# so that is built in too. If a dependency cannot be built in, kconfig keeps
+# the module (no build failure); post-build prints what was used.
+CONFIG_DRM=y
+CONFIG_DRM_VC4=y
+CONFIG_SND=y
+CONFIG_SND_SOC=y

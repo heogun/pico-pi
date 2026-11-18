@@ -1,51 +1,97 @@
 #!/bin/sh
-# Make sure PICO-8 is installed in /opt/pico8 (on the read-only root).
-# Sources, in order: a "pico-8" folder or the newest pico-8_*_raspi.zip on the
-# PICO8DATA partition, or a zip in the root of a USB stick.
+# Make sure a verified PICO-8 is installed in /opt/pico8 (on the read-only
+# root). Sources, in order: a "pico-8" folder or the newest
+# pico-8_*_raspi.zip on the PICO8DATA partition, or a zip in the root of a
+# USB stick. Every package is checked against the signed list of known-good
+# PICO-8 builds first (verify_pico8 in lib.sh, PICO8_VERIFY in pico8os.txt).
 . /usr/lib/pico8os/lib.sh
+load_config
+LOG="$DATA/logs/pico8.log"
 
+log() { mkdir -p "$DATA/logs"; echo "$(date '+%F %T') install: $*" >> "$LOG"; }
+
+# install_from SRC -> install_pico8's return code
 install_from() {
 	mount -o remount,rw / 2>/dev/null
-	install_pico8 "$1" "$PICO8_DIR"; rc=$?
+	out=$(install_pico8 "$1" "$PICO8_DIR"); rc=$?
 	sync
 	mount -o remount,ro / 2>/dev/null
+	[ -n "$out" ] && { say "$out"; log "$(basename "$1"): $out"; }
 	return $rc
+}
+
+banner() {
+	clear
+	cat <<'MSG'
+
+  ==============================================
+               P I C O 8 - O S
+  ==============================================
+MSG
 }
 
 src=$(find_folder) || src=$(find_zip)
 if [ -n "$src" ] && [ "$(cat "$PICO8_DIR/.source" 2>/dev/null)" != "$(source_sum "$src")" ]; then
-	say "Installing PICO-8 from $(basename "$src") ..."
-	install_from "$src" || sleep 5
+	say "Checking and installing PICO-8 from $(basename "$src") ..."
+	install_from "$src"; rc=$?
+	if [ $rc = 3 ] && update_pico8_hashes; then
+		install_from "$src"; rc=$?          # the version may be listed now
+	fi
+	if [ $rc != 0 ] && is_installed; then
+		log "keeping the installed PICO-8 ($(cat "$PICO8_DIR/.verify" 2>/dev/null))"
+		sleep 5
+	fi
 fi
 is_installed && exit 0
 
-clear
-cat <<'MSG'
+# Nothing usable installed: explain, then keep trying.
+while :; do
+	banner
+	if [ -n "${rc:-}" ] && [ "$rc" = 3 ]; then
+		cat <<MSG
 
-  ==============================================
-               P I C O - P I
-  ==============================================
+  This PICO-8 version is not on the list of
+  verified builds yet. The console checks for
+  an updated list every 30 seconds (needs
+  network). To install it anyway, set
+  PICO8_VERIFY=warn in pico8os.txt.
+MSG
+	elif [ -n "${rc:-}" ] && [ "$rc" = 4 ]; then
+		cat <<'MSG'
+
+  The PICO-8 package was REFUSED: its files do
+  not match the verified build, or it is not
+  the Raspberry Pi version. It may be damaged
+  or modified. Download it again from
+  https://www.lexaloffle.com/pico-8.php
+MSG
+	else
+		cat <<'MSG'
 
   PICO-8 is not installed yet.
 
   PICO-8 is commercial software by Lexaloffle.
   Buy it at https://www.lexaloffle.com/pico-8.php
   and download the "Raspberry Pi" zip.
-
-  Then either:
-   * copy pico-8_x.y.z_raspi.zip (or the unzipped
-     pico-8 folder) to the SD card's PICO8DATA
-     drive and reboot, or
-   * put the zip in the root of a USB stick and
-     plug the stick in now.
-
-  Waiting for a USB stick ...
 MSG
-
-while :; do
-	if scan_usb; then
-		src=$(find_zip)
-		[ -n "$src" ] && install_from "$src" && exit 0
 	fi
-	sleep 3
+	cat <<'MSG'
+
+  Copy pico-8_x.y.z_raspi.zip (or the unzipped
+  pico-8 folder) to the SD card's PICO8DATA
+  drive and reboot, or put the zip in the root
+  of a USB stick and plug it in now.
+MSG
+	i=0
+	while [ $i -lt 10 ]; do                       # ~30 s per round
+		if scan_usb; then
+			src=$(find_zip)
+			[ -n "$src" ] && { install_from "$src"; rc=$?; [ $rc = 0 ] && exit 0; continue 2; }
+		fi
+		sleep 3; i=$((i + 1))
+	done
+	if [ "${rc:-}" = 3 ] && update_pico8_hashes; then
+		src=$(find_folder) || src=$(find_zip)
+		[ -n "$src" ] && { install_from "$src"; rc=$?; [ $rc = 0 ] && exit 0; }
+	fi
 done

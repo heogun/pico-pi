@@ -8,13 +8,14 @@ mount_data() {
 	for dev in /dev/mmcblk0p5 /dev/vda5; do
 		[ -b "$dev" ] || continue
 		fsck.vfat -a -w "$dev" >/dev/null 2>&1
-		if mount -t vfat -o rw,noatime,flush,umask=0022 "$dev" /data; then
+		# owner pico (PICO-8 saves, carts), group www (web UI), nobody else
+		if mount -t vfat -o rw,noatime,flush,uid=1000,gid=1001,fmask=0117,dmask=0007 "$dev" /data; then
 			mkdir -p /data/carts /data/screenshots /data/pico8 /data/logs
 			return 0
 		fi
 	done
 	echo "S05picodata: data partition not found, using tmpfs" >&2
-	mount -t tmpfs -o size=64m tmpfs /data
+	mount -t tmpfs -o size=64m,uid=1000,gid=1001,mode=0770 tmpfs /data
 }
 
 mount_state() {

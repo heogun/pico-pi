@@ -136,8 +136,12 @@ progress{width:100%}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',4000)}
+// Read-only actions are GET; everything else is POST + X-Pico8os (the
+// console rejects state changes without both: CSRF protection).
+const READ_ONLY=['status','conf_get','carts','shots','log','bt_list','wifi_scan'];
 async function api(a,params={},opts={}){
   const q=new URLSearchParams({a,...params});
+  if(!READ_ONLY.includes(a))opts={method:'POST',...opts,headers:{'X-Pico8os':'1',...(opts.headers||{})}};
   const r=await fetch('/cgi-bin/api?'+q,opts);
   const ct=r.headers.get('content-type')||'';
   const d=ct.includes('json')?await r.json():await r.text();
@@ -148,6 +152,7 @@ function upload(a,params,file,bar){
   return new Promise(res=>{
     const x=new XMLHttpRequest();
     x.open('POST','/cgi-bin/api?'+new URLSearchParams({a,...params}));
+    x.setRequestHeader('X-Pico8os','1');
     if(bar){bar.hidden=false;x.upload.onprogress=e=>{if(e.lengthComputable)bar.value=e.loaded/e.total}}
     x.onload=()=>{if(bar)bar.hidden=true;let d;try{d=JSON.parse(x.responseText)}catch(e){d={ok:false,code:'upload_failed'}};res(d)};
     x.onerror=()=>{if(bar)bar.hidden=true;res({ok:false,code:'upload_failed'})};
@@ -165,7 +170,7 @@ const row=(k,v)=>`<tr><td>${esc(k)}</td><td>${v}</td></tr>`;
 async function status(){
   const s=await api('status');
   $('hdr').textContent=`${s.board} · ${s.version} · ${t('slot')} ${s.slot}`;
-  $('st').innerHTML=row(t('r_ip'),esc(s.ip||'-'))+row(t('r_wifi'),esc(wifiText(s.wifi)))+row(t('r_pico8'),esc(p8Text(s.pico8)))+
+  $('st').innerHTML=row(t('r_ip'),esc(s.ip||'-'))+row(t('r_wifi'),esc(wifiText(s.wifi)))+row(t('r_pico8'),esc(p8Text(s.pico8))+' '+p8Verify(s.pico8_verify))+
     row(t('r_free'),esc(s.data_free))+row(t('r_uptime'),esc(s.uptime));
   const o=s.ota||{};
   $('otast').innerHTML=row(t('r_version'),esc(o.version||s.version))+row(t('r_board'),esc(s.board))+row(t('r_slot'),esc(o.slot||s.slot))+

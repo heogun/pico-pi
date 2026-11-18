@@ -1,6 +1,7 @@
 #!/bin/sh
-# Runs on tty1 (respawned by init): install if needed, launch PICO-8,
-# then apply EXIT_ACTION from /data/pico8os.txt.
+# Runs on tty1 (respawned by init), as root: install if needed, prepare the
+# console (keymap, audio, CPU), then run PICO-8 as the unprivileged pico user
+# and apply EXIT_ACTION from /data/pico8os.txt.
 . /usr/lib/pico8os/lib.sh
 
 LOG=/tmp/pico8.log
@@ -10,7 +11,39 @@ FAILS=/tmp/pico8.fastfail
 # un-mute the VT keyboard and leave graphics mode before anything else.
 reset_vt() { pico8-hotkey --reset-vt /dev/tty1 2>/dev/null; }
 
-drop_to_shell() { reset_vt; exec /sbin/getty -L tty1 0 vt100; }
+# Root shell on tty1 only with DEBUG=on (root has no password login).
+# Otherwise wait and let init start the session again.
+drop_to_shell() {
+	reset_vt
+	if [ "$DEBUG" = on ]; then
+		say "DEBUG=on: root shell (exit to restart PICO-8)"
+		exec /bin/sh -l
+	fi
+	sleep "${1:-10}"
+	exit 1
+}
+
+# CPU frequency policy for smooth frame times (CPU_GOVERNOR in pico8os.txt;
+# the firmware still throttles on heat or under-voltage).
+setup_cpu() {
+	for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+		[ -w "$g" ] && echo "${CPU_GOVERNOR:-performance}" > "$g" 2>/dev/null
+	done
+}
+
+# Once per boot: how long the kernel took (until init started) and when
+# PICO-8 was started, appended to logs/boot.log (last 50 boots).
+log_boot_time() {
+	[ -f "$RUN/boot-logged" ] && return
+	mkdir -p "$RUN" "$DATA/logs"; : > "$RUN/boot-logged"
+	hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
+	init_at=$(awk -v hz="$hz" '{printf "%.2f", $22 / hz}' /proc/1/stat)
+	now=$(cut -d' ' -f1 /proc/uptime)
+	f="$DATA/logs/boot.log"
+	{ tail -n 49 "$f" 2>/dev/null
+	  echo "$(date '+%F %T') $(os_version) slot $(current_slot): kernel ${init_at}s, PICO-8 start ${now}s"
+	} > "$f.tmp" && mv "$f.tmp" "$f"
+}
 
 pick_binary() {
 	case $(uname -m) in
@@ -97,7 +130,7 @@ load_config
 if ! bin=$(pick_binary); then
 	say "No PICO-8 binary for $(uname -m) in $PICO8_DIR."
 	say "Pi 5 images need pico8_64 (PICO-8 0.2.4 or newer)."
-	sleep 10; drop_to_shell
+	drop_to_shell 30
 fi
 
 mkdir -p "$DATA/carts" "$DATA/screenshots" "$DATA/pico8"
@@ -105,15 +138,19 @@ setup_keymap
 setup_video "$bin"
 setup_controllers
 setup_audio
+setup_cpu
 export HOME="$DATA"
 
 set -- -home "$DATA/pico8" -root_path "$DATA/carts" -desktop "$DATA/screenshots"
 # One-shot: open the PICO8-OS settings cart (hotkey, web UI) instead.
 next=$(cat "$RUN/next-cart" 2>/dev/null); rm -f "$RUN/next-cart"
 SETTINGS_CART="$DATA/carts/pico8os/pico8os.p8"
+rm -f "$RUN/settings-active"
 if [ "$next" = settings ] && [ -f "$SETTINGS_CART" ]; then
 	PICO8_MODE=settings
 	set -- "$@" -run "$SETTINGS_CART"
+	# lets pico8os-agent accept this cart's requests (see pico8os-agent)
+	: > "$RUN/settings-active"
 fi
 case $PICO8_MODE in
 	splore) set -- "$@" -splore ;;
@@ -124,14 +161,19 @@ set -- "$@" $PICO8_ARGS
 
 clear
 cd "$PICO8_DIR" || exit 1
+log_boot_time
 started=$(date +%s)
-"$PICO8_DIR/$bin" "$@" >>"$LOG" 2>&1
+# Drop to the pico user (video/render/input/audio groups). su keeps the
+# environment (-p) and execs, so PICO-8's exit status comes back unchanged.
+su -p -s /bin/sh pico -c 'exec "$0" "$@"' "$PICO8_DIR/$bin" "$@" >>"$LOG" 2>&1
 rc=$?
 ran=$(( $(date +%s) - started ))
+rm -f "$RUN/settings-active"
 reset_vt
 [ "$rc" -ne 0 ] && save_log
 
-# Crash-loop guard: three quick failures in a row -> show log, open a shell.
+# Crash-loop guard: three quick failures in a row -> show the log; a root
+# shell only with DEBUG=on, otherwise try again after a minute.
 if [ "$ran" -lt 5 ] && [ "$rc" -ne 0 ]; then
 	n=$(( $(cat "$FAILS" 2>/dev/null || echo 0) + 1 ))
 	echo "$n" > "$FAILS"
@@ -142,7 +184,7 @@ if [ "$ran" -lt 5 ] && [ "$rc" -ne 0 ]; then
 		tail -n 15 "$LOG"
 		say ""; say "Logs: $DATA/logs/   Settings: $DATA/pico8os.txt"
 		sleep 15
-		drop_to_shell
+		drop_to_shell 60
 	fi
 	sleep 1
 	exit "$rc"
@@ -156,6 +198,6 @@ rm -f "$FAILS"
 sync
 case $EXIT_ACTION in
 	poweroff) poweroff; sleep 30 ;;
-	shell) drop_to_shell ;;
+	shell) drop_to_shell 1 ;;   # a shell only with DEBUG=on
 	*) exit 0 ;;   # restart: init respawns this session
 esac

@@ -192,6 +192,10 @@ Object.assign(S, {
   wifi_ap: ['Setup network {0}', '설정용 네트워크 {0}', '设置用网络 {0}', '設定用ネットワーク {0}', 'Réseau de configuration {0}', 'Red de configuración {0}', 'Сеть настройки {0}', 'Rete di configurazione {0}', 'Einrichtungsnetz {0}'],
   wifi_off: ['Not connected', '연결 안 됨', '未连接', '未接続', 'Non connecté', 'Sin conexión', 'Не подключено', 'Non connesso', 'Nicht verbunden'],
   wifi_none: ['No Wi-Fi hardware', 'Wi-Fi 장치 없음', '没有无线网卡', 'Wi-Fi 機能なし', 'Pas de Wi-Fi', 'Sin Wi-Fi', 'Нет Wi-Fi', 'Nessun Wi-Fi', 'Kein WLAN'],
+  api_bad_origin: ['Request refused (wrong address or origin)', '요청 거부됨 (주소나 출처가 맞지 않음)', '请求被拒绝（地址或来源不符）', 'リクエストを拒否しました（アドレスまたは送信元が不正）', 'Requête refusée (adresse ou origine incorrecte)', 'Solicitud rechazada (dirección u origen incorrectos)', 'Запрос отклонён (неверный адрес или источник)', 'Richiesta rifiutata (indirizzo o origine non validi)', 'Anfrage abgelehnt (falsche Adresse oder Herkunft)'],
+  ota_err_older: ['Update {0} is not newer than the installed {1}', '업데이트 {0}이 설치된 {1}보다 새 버전이 아닙니다', '更新 {0} 不比已安装的 {1} 新', '更新 {0} はインストール済みの {1} より新しくありません', 'La mise à jour {0} n\'est pas plus récente que {1}', 'La actualización {0} no es más nueva que {1}', 'Обновление {0} не новее установленной {1}', 'L\'aggiornamento {0} non è più recente di {1}', 'Update {0} ist nicht neuer als {1}'],
+  p8v_ok: ['verified', '검증됨', '已验证', '検証済み', 'vérifié', 'verificado', 'проверено', 'verificato', 'geprüft'],
+  p8v_unknown: ['not verified (unlisted version)', '검증 안 됨 (목록에 없는 버전)', '未验证（未收录的版本）', '未検証（リストにないバージョン）', 'non vérifié (version non listée)', 'sin verificar (versión no incluida)', 'не проверено (версии нет в списке)', 'non verificato (versione non in elenco)', 'nicht geprüft (Version nicht gelistet)'],
   p8_installed: ['Installed', '설치됨', '已安装', 'インストール済み', 'Installé', 'Instalado', 'Установлено', 'Installato', 'Installiert'],
   p8_none: ['Not installed', '설치 안 됨', '未安装', '未インストール', 'Non installé', 'No instalado', 'Не установлено', 'Non installato', 'Nicht installiert'],
 });
@@ -222,6 +226,12 @@ function wifiText(w) {
   if (w.startsWith('on:')) return w.slice(3);
   if (w.startsWith('ap:')) return t('wifi_ap', w.slice(3));
   return w === 'none' ? t('wifi_none') : t('wifi_off');
+}
+// PICO-8 package check result ("ok 0.2.7" / "unknown 0.2.8")
+function p8Verify(v) {
+  if (!v) return '';
+  const k = v.split(' ')[0];
+  return S['p8v_' + k] ? '(' + t('p8v_' + k) + ')' : '';
 }
 function p8Text(v) {
   return v === '@installed' ? t('p8_installed') : v === '@none' ? t('p8_none') : v;

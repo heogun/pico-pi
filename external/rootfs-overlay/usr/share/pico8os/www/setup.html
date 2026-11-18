@@ -52,7 +52,7 @@ $('sel').onchange=e=>{if(e.target.value)$('ssid').value=e.target.value};
 async function save(){
   if(!$('ssid').value){$('msg').textContent=t('setup_need_ssid');return}
   const body=new URLSearchParams({ssid:$('ssid').value,psk:$('psk').value,country:$('country').value}).toString();
-  const r=await fetch('/cgi-bin/api?a=wifi_set',{method:'POST',body}).then(r=>r.json()).catch(()=>({ok:false,code:'upload_failed'}));
+  const r=await fetch('/cgi-bin/api?a=wifi_set',{method:'POST',body,headers:{'X-Pico8os':'1'}}).then(r=>r.json()).catch(()=>({ok:false,code:'upload_failed'}));
   $('msg').textContent=r.ok?t('setup_ok'):msgText(r);
 }
 </script>

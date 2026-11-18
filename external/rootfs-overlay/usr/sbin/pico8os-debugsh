@@ -1,0 +1,11 @@
+#!/bin/sh
+# Serial console (inittab "console" entry). Root has no password login, so
+# there is no login prompt; with DEBUG=on in pico8os.txt this gives a root
+# shell on the serial port for troubleshooting, otherwise it idles.
+. /usr/lib/pico8os/lib.sh
+load_config
+if [ "$DEBUG" = on ]; then
+	echo "PICO8-OS debug shell (DEBUG=on in pico8os.txt)"
+	exec /bin/sh -l
+fi
+exec sleep 2147483647

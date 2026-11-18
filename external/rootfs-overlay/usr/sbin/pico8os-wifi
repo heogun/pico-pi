@@ -4,10 +4,12 @@
 #   pico8os-wifi scan                 list nearby network names
 #
 # No network configured (or it cannot be joined within 40 s) and no wired
-# connection -> open access point "PICO8-OS-xxxx" at 192.168.4.1. Every web
-# address on it shows the Wi-Fi setup page (captive portal); after the
-# network is saved the console leaves AP mode and joins it. While in AP mode
-# with a network configured, joining it is retried every 5 minutes.
+# connection -> WPA2 access point "PICO8-OS-xxxx" at 192.168.4.1; its
+# password is in the settings cart (Ctrl+Alt+S / SELECT 2 s) and in
+# PICO8DATA/wifi-setup.txt. Every web address on it shows the Wi-Fi setup
+# page (captive portal); after the network is saved the console leaves AP
+# mode and joins it. While in AP mode with a network configured, joining it
+# is retried every 5 minutes; with no client for 30 minutes the AP turns off.
 . /usr/lib/pico8os/lib.sh
 load_config
 IF=wlan0
@@ -70,7 +72,12 @@ channel=6
 country_code=${WIFI_COUNTRY:-US}
 auth_algs=1
 wmm_enabled=1
+wpa=2
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+wpa_passphrase=$(ap_password)
 CONF
+	chmod 600 "$RUN/hostapd.conf"
 	ip link set $IF up
 	ip addr add $AP_IP/24 dev $IF
 	hostapd -B "$RUN/hostapd.conf" >/dev/null 2>&1 || { log "hostapd failed"; return 1; }
@@ -79,17 +86,25 @@ CONF
 		--address=/#/$AP_IP --pid-file="$RUN/dnsmasq.pid"
 	echo "$ssid" > "$RUN/ap-ssid"
 	touch "$RUN/ap-mode"
+	printf 'PICO8-OS Wi-Fi setup network\r\nName:     %s\r\nPassword: %s\r\nThen open http://192.168.4.1\r\n' \
+		"$ssid" "$(ap_password)" > "$DATA/wifi-setup.txt"; sync
 	pico8os-web restart
 	log "setup access point $ssid on $AP_IP"
-	# Retry the configured network now and then, unless someone is connected.
+	# Retry the configured network now and then, unless someone is connected;
+	# turn the AP off after 30 minutes without any client.
 	(
+		idle=0
 		while [ -f "$RUN/ap-mode" ]; do
 			sleep 300
 			[ -f "$RUN/ap-mode" ] || exit 0
+			if [ -n "$(iw dev $IF station dump 2>/dev/null)" ]; then idle=0; continue; fi
+			idle=$((idle + 5))
 			load_config
-			[ -n "$WIFI_SSID" ] || continue
-			[ -n "$(iw dev $IF station dump 2>/dev/null)" ] && continue
-			exec pico8os-wifi restart
+			[ -n "$WIFI_SSID" ] && exec pico8os-wifi restart
+			if [ $idle -ge 30 ]; then
+				log "setup access point off after 30 minutes without a client"
+				exec pico8os-wifi stop
+			fi
 		done
 	) >/dev/null 2>&1 &
 }

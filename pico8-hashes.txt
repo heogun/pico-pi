@@ -1,0 +1,7 @@
+# Known-good PICO-8 Raspberry Pi builds: <version> <file> <sha256>
+# Signed with the OTA key (pico8-hashes.txt.sig). See scripts/pico8-hashes.sh.
+0.2.7 pico8.dat 91212d55b540ef2abf9d5df7bb46fb87f41c35f3e9d108ebd8680debab020be2
+0.2.7 pico8 cee03b8ffd89bd3881a04ab51a21b0f47655c70d20bcec44cd7203274b24a817
+0.2.7 pico8_dyn 443e9553a6aa81dd2bbb26cbe9a6ea00cad4a16f8cd93be765811792833ffffc
+0.2.7 pico8_64 ad56e8ed1ad812cab57a7e2679b6731eba367cdd626cbf40a12b514060b597aa
+0.2.7 pico8_gpio f9df817ffa37257ee79c4779ba4e0f869d81f33ff07caa76054b24ec837e2e50
