@@ -17,6 +17,7 @@ only the Kconfig files and arch/*/configs are needed.
 import os
 import re
 import sys
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FRAGMENTS = sorted(__import__("glob").glob(os.path.join(HERE, "..", "external", "board", "rpi", "linux-*.fragment")))
@@ -54,7 +55,7 @@ def parse_kconfig(src, arch):
         stack = []            # (kind, symbols) for if/menu/choice blocks
         cur = None            # symbols list of the entry being defined
         pending_menu = None
-        for raw in open(path, encoding="utf-8", errors="replace"):
+        for raw in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
             line = raw.split("#", 1)[0].strip() if not raw.lstrip().startswith("help") else raw.strip()
             if not line:
                 continue
@@ -119,18 +120,19 @@ def closure(deps, sym, memo):
 
 
 def main(src):
-    disabled = {l.split()[1][len("CONFIG_"):] for f in FRAGMENTS for l in open(f)
-                if l.startswith("# CONFIG_") and l.rstrip().endswith("is not set")}
+    disabled = {line.split()[1][len("CONFIG_"):] for f in FRAGMENTS
+                for line in Path(f).read_text().splitlines()
+                if line.startswith("# CONFIG_") and line.rstrip().endswith("is not set")}
     bad = 0
     for label, arch, defconfig, needs in TARGETS:
         deps = parse_kconfig(src, arch)
         memo = {}
-        lines = [l.strip() for l in open(os.path.join(src, "arch", arch, "configs", defconfig))]
-        mods = [l.split("=")[0][7:] for l in lines if l.startswith("CONFIG_") and l.endswith("=m")]
-        ys = [l.split("=")[0][7:] for l in lines if l.startswith("CONFIG_") and l.endswith("=y")]
-        gone = lambda s: s in disabled or bool(closure(deps, s, memo) & disabled)
-        mods_gone = sum(1 for s in mods if gone(s))
-        ys_gone = sum(1 for s in ys if gone(s))
+        lines = Path(src, "arch", arch, "configs", defconfig).read_text().splitlines()
+        mods = [line.split("=")[0][7:] for line in lines if line.startswith("CONFIG_") and line.endswith("=m")]
+        ys = [line.split("=")[0][7:] for line in lines if line.startswith("CONFIG_") and line.endswith("=y")]
+        gone = {s for s in mods + ys if s in disabled or closure(deps, s, memo) & disabled}
+        mods_gone = sum(s in gone for s in mods)
+        ys_gone = sum(s in gone for s in ys)
         unknown = sorted(s for s in disabled if s not in deps)
         print(f"{label}: defconfig modules {len(mods)} -> {len(mods) - mods_gone} "
               f"({mods_gone} removed), built-in options {len(ys)} -> {len(ys) - ys_gone}")

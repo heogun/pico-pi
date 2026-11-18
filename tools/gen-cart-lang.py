@@ -54,7 +54,8 @@ def load_bdf(path):
 def load_custom(path, latin):
     """Hand-drawn glyphs: header line + 8 art rows, or 'X=Y' Latin alias."""
     glyphs = {}
-    lines = [l.rstrip("\n") for l in open(path, encoding="utf-8")]
+    with open(path, encoding="utf-8") as src:
+        lines = [line.rstrip("\n") for line in src]
     i = 0
     while i < len(lines):
         l = lines[i]
@@ -98,14 +99,15 @@ def gfx_lines(mem):
     out = []
     for y in range(128):
         row = mem[y * 64:(y + 1) * 64]
-        out.append("".join("%x%x" % (b & 15, b >> 4) for b in row))
+        out.append("".join(f"{b & 15:x}{b >> 4:x}" for b in row))
     while out and set(out[-1]) == {"0"}:
         out.pop()
     return out
 
 
 def main(font_dir, strings_json, out_dir):
-    data = json.load(open(strings_json, encoding="utf-8"))
+    with open(strings_json, encoding="utf-8") as src:
+        data = json.load(src)
     fonts = {}
 
     def font(v):
@@ -178,13 +180,11 @@ def main(font_dir, strings_json, out_dir):
                 i = c - 16
                 fnt[8 + i // 2] |= nib << (4 * (i % 2))
 
-        def width(s):
-            return sum(adv[ch] for ch in s)
-
         for k, s in texts.items():
             limit = MAX_LABEL_W.get(k, 100)
-            if width(s) > limit:
-                raise SystemExit(f"{lang}: '{k}' is {width(s)} px wide (max {limit}): {s}")
+            width = sum(adv[ch] for ch in s)
+            if width > limit:
+                raise SystemExit(f"{lang}: '{k}' is {width} px wide (max {limit}): {s}")
 
         blob = "".join(f"{k}={v}\n" for k, v in texts.items())
         enc = bytes(code[ch] for ch in blob) + b"\0"

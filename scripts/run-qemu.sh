@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Boot the PICO8-OS QEMU image (qemu-system-arm, "virt" machine).
 #   scripts/run-qemu.sh [--zip pico-8_x.y.z_raspi.zip] [--fresh]
 # --zip   copy the PICO-8 Raspberry Pi zip onto the PICO8DATA partition

@@ -4,6 +4,8 @@
 . /usr/lib/pico8os/lib.sh
 load_config
 all=${1:-all}
+# Callers pass shell patterns such as WIFI_*.
+# shellcheck disable=SC2254
 need() { [ "$all" = all ] && return 0; for k in $KEYS; do case $k in $1) return 0 ;; esac; done; return 1; }
 KEYS="$*"
 if need 'WIFI_*'; then pico8os-wifi restart >/dev/null 2>&1 & fi

@@ -31,7 +31,10 @@ shell_of() {
 	fi
 }
 for f in $scripts; do
-	head -c 2 "$f" | grep -q '#!' || case $f in *.sh) ;; *) continue ;; esac
+	case $f in
+		*.sh) ;;
+		*) head -n 1 "$f" | grep -Eq '^#!.*[/ ](ba)?sh([[:space:]]|$)' || continue ;;
+	esac
 	sh_=$(shell_of "$f")
 	$sh_ -n "$f" || bad "syntax ($sh_): $f"
 	if command -v shellcheck >/dev/null; then

@@ -110,7 +110,7 @@ const S = {
 let LANG = 'en';
 function pickLang(device) {
   let l = null;
-  try { l = localStorage.getItem('pico8os-lang'); } catch (e) {}
+  try { l = localStorage.getItem('pico8os-lang'); } catch { /* Fall back to the device or browser language. */ }
   if (!LANGS.includes(l)) l = LANGS.includes(device) ? device : null;
   if (!l) { const b = (navigator.language || 'en').slice(0, 2).toLowerCase(); l = LANGS.includes(b) ? b : 'en'; }
   return l;
@@ -119,7 +119,7 @@ function pickLang(device) {
 function applyLang(l) {
   LANG = l;
   document.documentElement.lang = l;
-  try { localStorage.setItem('pico8os-lang', l); } catch (e) {}
+  try { localStorage.setItem('pico8os-lang', l); } catch { /* The choice still applies to this page. */ }
   document.querySelectorAll('[data-i18n]').forEach(e => { e.textContent = t(e.dataset.i18n); });
   document.querySelectorAll('[data-i18n-ph]').forEach(e => { e.placeholder = t(e.dataset.i18nPh); });
   const sel = document.getElementById('langsel');

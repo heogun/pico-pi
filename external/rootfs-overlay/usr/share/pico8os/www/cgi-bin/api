@@ -76,28 +76,27 @@ auth_unlock() { rmdir "$AUTH_DIR/.lock" 2>/dev/null; }
 auth_put() { printf '%s\n' "$2" > "$1.$$" && mv "$1.$$" "$1"; }
 # login_wait: seconds this client must still wait (0 = may try)
 login_wait() {
-	set -- $(cat "$(ip_file)" 2>/dev/null) 0 0 0
-	w=0; [ "$2" -gt "$now" ] && w=$(( $2 - now ))
-	set -- $(cat "$AUTH_DIR/_all" 2>/dev/null) 0 0
-	if [ "$2" -gt "$GLOBAL_MAX" ] && [ $(( now - $1 )) -lt "$GLOBAL_WINDOW" ]; then
-		g=$(( $1 + GLOBAL_WINDOW - now )); [ "$g" -gt "$w" ] && w=$g
+	read -r _ until _ 2>/dev/null < "$(ip_file)" || until=0
+	w=0; [ "$until" -gt "$now" ] && w=$(( until - now ))
+	read -r start count 2>/dev/null < "$AUTH_DIR/_all" || { start=0; count=0; }
+	if [ "$count" -gt "$GLOBAL_MAX" ] && [ $(( now - start )) -lt "$GLOBAL_WINDOW" ]; then
+		g=$(( start + GLOBAL_WINDOW - now )); [ "$g" -gt "$w" ] && w=$g
 	fi
 	echo "$w"
 }
 note_failure() {
 	ipf=$(ip_file)
-	set -- $(cat "$ipf" 2>/dev/null) 0 0 0
-	f=$1 until=$2
-	[ $(( now - $3 )) -ge "$CLIENT_FORGET" ] && f=0
+	read -r f until last 2>/dev/null < "$ipf" || { f=0; until=0; last=0; }
+	[ $(( now - last )) -ge "$CLIENT_FORGET" ] && f=0
 	f=$((f + 1))
 	if [ "$f" -ge "$CLIENT_FREE" ]; then
 		d=$(( 30 << (f - CLIENT_FREE) )); { [ "$d" -gt "$CLIENT_MAX_LOCK" ] || [ "$d" -le 0 ]; } && d=$CLIENT_MAX_LOCK
 		until=$(( now + d ))
 	fi
 	auth_put "$ipf" "$f $until $now"
-	set -- $(cat "$AUTH_DIR/_all" 2>/dev/null) 0 0
-	if [ $(( now - $1 )) -ge "$GLOBAL_WINDOW" ]; then auth_put "$AUTH_DIR/_all" "$now 1"
-	else auth_put "$AUTH_DIR/_all" "$1 $(( $2 + 1 ))"; fi
+	read -r start count 2>/dev/null < "$AUTH_DIR/_all" || { start=0; count=0; }
+	if [ $(( now - start )) -ge "$GLOBAL_WINDOW" ]; then auth_put "$AUTH_DIR/_all" "$now 1"
+	else auth_put "$AUTH_DIR/_all" "$start $(( count + 1 ))"; fi
 }
 
 # priv_or_fail CMD...: run a privileged action; the request fails with it
@@ -213,9 +212,10 @@ if [ "$LISTENER" != ap ]; then
 		auth_lock || fail locked 1
 		wait=$(login_wait)
 		if [ "$wait" -gt 0 ]; then auth_unlock; fail locked "$wait"; fi
-		set -- $(cat "$RUN/web-auth" 2>/dev/null)
-		try=$(printf '%s%s' "${1:-}" "$pw" | sha256sum | cut -d' ' -f1)
-		if [ -n "${2:-}" ] && [ "$try" = "$2" ]; then
+		salt='' hash=''
+		read -r salt hash 2>/dev/null < "$RUN/web-auth" || hash=''
+		try=$(printf '%s%s' "$salt" "$pw" | sha256sum | cut -d' ' -f1)
+		if [ -n "$hash" ] && [ "$try" = "$hash" ]; then
 			rm -f "$(ip_file)"; auth_unlock
 			sid=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
 			: > "$SESS_DIR/$sid"
@@ -377,7 +377,7 @@ ota_download)
 ota_rollback)
 	ok ota "$(priv ota_rollback 2>/dev/null)" ;;
 power)
-	case $(param do) in
+	case $(param 'do') in
 		restart) priv_or_fail restart_pico8; ok restarting ;;
 		settings) priv_or_fail restart_pico8 settings; ok settings ;;
 		reboot) priv_or_fail reboot; ok rebooting ;;

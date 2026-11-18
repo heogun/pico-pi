@@ -33,7 +33,7 @@ function upload(a, params, file, bar) {
     x.open('POST', '/cgi-bin/api?' + new URLSearchParams({a, ...params}));
     x.setRequestHeader('X-Pico8os', '1');
     if (bar) { bar.hidden = false; x.upload.onprogress = e => { if (e.lengthComputable) bar.value = e.loaded / e.total; }; }
-    x.onload = () => { if (bar) bar.hidden = true; let d; try { d = JSON.parse(x.responseText); } catch (e) { d = {ok: false, code: 'upload_failed'}; } res(d); };
+    x.onload = () => { if (bar) bar.hidden = true; let d; try { d = JSON.parse(x.responseText); } catch { d = {ok: false, code: 'upload_failed'}; } res(d); };
     x.onerror = () => { if (bar) bar.hidden = true; res({ok: false, code: 'upload_failed'}); };
     x.send(file);
   });
@@ -44,11 +44,11 @@ function show(tab) {
   curTab = tab;
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.t === tab));
   document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === tab));
-  ({home: status, carts: loadCarts, shots: loadShots, settings: loadConf, net: loadNet, update: status, logs: loadLog})[tab]();
+  ({home: loadStatus, carts: loadCarts, shots: loadShots, settings: loadConf, net: loadNet, update: loadStatus, logs: loadLog})[tab]();
 }
 // Table rows: text cells only (esc() for the few HTML snippets below).
 const row = (k, v) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`;
-async function status() {
+async function loadStatus() {
   const s = await api('status');
   $('hdr').textContent = `${s.board} · ${s.version} · ${t('slot')} ${s.slot}`;
   $('st').innerHTML = row(t('r_ip'), esc(s.ip || '-')) + row(t('r_wifi'), esc(wifiText(s.wifi))) + row(t('r_pico8'), esc(p8Text(s.pico8)) + ' ' + esc(p8Verify(s.pico8_verify))) +
@@ -106,7 +106,7 @@ async function setq(e) { const r = await api('set', {k: e.id.slice(2), v: e.valu
 async function saveConf() { const r = await upload('conf_put', {}, $('conf').value); toast(msgText(r)); }
 
 async function loadNet() {
-  const s = await status();
+  const s = await loadStatus();
   $('wifist').innerHTML = row(t('r_state'), esc(wifiText(s.wifi))) + row(t('r_ip'), esc(s.ip || '-'));
   scanWifi();
   const bt = await api('bt_list');
@@ -127,12 +127,12 @@ async function setWifi() {
 async function upPico8(f) { if (!f) return; const r = await upload('pico8_put', {name: f.name}, f, $('p8prog')); toast(msgText(r)); }
 async function upOta(f) {
   if (!f) return; toast(t('uploading_verify'));
-  const r = await upload('ota_put', {}, f, $('otaprog')); toast(msgText(r)); $('otaapply').hidden = !r.ok; status();
+  const r = await upload('ota_put', {}, f, $('otaprog')); toast(msgText(r)); $('otaapply').hidden = !r.ok; loadStatus();
 }
 async function otaApply() { if (!confirm(t('c_install'))) return; await api('ota_apply'); $('otaapply').hidden = true; pollOta(); }
 function pollOta() {
   const h = setInterval(async () => {
-    const s = await status(); const p = (s.ota || {}).progress || '';
+    const s = await loadStatus(); const p = (s.ota || {}).progress || '';
     if (/^(ready|error|updated|uptodate|available)\b/.test(p)) {
       clearInterval(h); toast(otaText(p));
       if (p.startsWith('ready') && confirm(t('c_reboot_now'))) power('reboot');
@@ -165,7 +165,7 @@ const ACTIONS = {
     $('webpw').value = ''; toast(msgText(r));
   },
   btPair: () => api('bt_pair').then(r => toast(msgText(r))),
-  otaCheck: () => api('ota_check').then(r => { toast(msgText(r)); status(); }),
+  otaCheck: () => api('ota_check').then(r => { toast(msgText(r)); loadStatus(); }),
   otaDownload: () => api('ota_download').then(r => { toast(msgText(r)); pollOta(); }),
   otaRollback: () => { if (confirm(t('c_rollback'))) api('ota_rollback').then(r => toast(msgText(r))); },
 };
@@ -193,4 +193,4 @@ $('langsel').innerHTML = langSelect();
 $('langsel').addEventListener('change', e => { applyLang(e.target.value); api('set', {k: 'LANGUAGE', v: e.target.value}); show(curTab); });
 window.addEventListener('unhandledrejection', e => { if (e.reason && e.reason.message === 'login') e.preventDefault(); });
 applyLang(pickLang());
-status().then(s => { $('logoutbtn').hidden = false; return s; }).then(s => { if (s && s.lang) { const l = pickLang(s.lang); if (l !== LANG) { applyLang(l); show(curTab); } } });
+loadStatus().then(s => { $('logoutbtn').hidden = false; return s; }).then(s => { if (s && s.lang) { const l = pickLang(s.lang); if (l !== LANG) { applyLang(l); show(curTab); } } });

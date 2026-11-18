@@ -53,8 +53,8 @@ is_controller() {
 	# Some pads advertise no icon: fall back to the name.
 	name=$(printf '%s\n' "$info" | sed -n 's/^[[:space:]]*Name: //p' | tr 'A-Z' 'a-z')
 	case $name in
-		*controller*|*gamepad*|*joy-con*|*joycon*|*"pro controller"*|*8bitdo*| \
-		*xbox*|*dualshock*|*dualsense*|*"wireless controller"*|*joystick*|*gamesir*) return 0 ;;
+		*controller*|*gamepad*|*joy-con*|*joycon*|*8bitdo*| \
+		*xbox*|*dualshock*|*dualsense*|*joystick*|*gamesir*) return 0 ;;
 	esac
 	return 1
 }

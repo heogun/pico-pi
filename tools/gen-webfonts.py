@@ -33,7 +33,8 @@ KANA = [(0x3000, 0x30FF), (0xFF01, 0xFF60)]
 def page_chars(www):
     text = ""
     for f in glob.glob(os.path.join(www, "*.html")) + [os.path.join(www, "i18n.js")]:
-        text += open(f, encoding="utf-8").read()
+        with open(f, encoding="utf-8") as src:
+            text += src.read()
     return set(text)
 
 

@@ -6,7 +6,7 @@
 [keints/picopi](https://github.com/keints/picopi)에 보관된 `picopi-rpi3.zip` 속 파일과 같습니다. 여기에 PICO-8 0.2.7(2025-08)을 덮어 넣은 상태입니다.
 
 | 항목 | PICOPi (2018-01) | 확인 방법 |
-|---|---|---|
+| --- | --- | --- |
 | 빌드 | Buildroot 2017.11.1, Linux 4.9.76, rootfs를 initramfs로 커널(`pico.pi`)에 내장 | 커널 압축 해제 → `Linux version` 문자열, cpio 추출 |
 | 펌웨어 | 2018-01 `start.elf`, DTB는 `bcm2710-rpi-3-b`와 `cm3`뿐 (3B+는 2018-03 출시) | 파일 목록 |
 | 그래픽 | SDL 2.0.7 RPI 백엔드 (dispmanx, 레거시 `libbrcmEGL`) | `libSDL2-2.0.so.0.7.0` 심볼 |
@@ -41,6 +41,7 @@
 4. **복구 장치 없음:** 하드웨어 워치독을 쓰지 않습니다. PICO-8이 죽으면 그대로 전원이 꺼집니다.
 
 → **PICO8-OS 조치:**
+
 - GNU wget과 OpenSSL, CA 인증서를 넣고 `/etc/wgetrc`에 `timeout=15`, `tries=2`를 둡니다. busybox ntpd로 시계를 맞추고, Wi-Fi도 지원합니다.
 - 3-파티션 구조로 바꿨습니다. 부트 파티션은 마운트하지 않고, rootfs는 읽기 전용입니다. 데이터는 FAT32로 따로 두고 `sync` 대신 `flush`로 마운트합니다.
 - 하드웨어 워치독(`S15watchdog`)을 켜고, 커널에 `panic=10 softlockup_panic=1`을 줍니다.
@@ -52,7 +53,7 @@
 ### A. 라즈베리파이를 PICO-8 전용으로 부팅하는 이미지/스크립트
 
 | 프로젝트 | 최근 활동 | 기반 | 대상 | 특징 / 한계 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | [PICOPi (gamaral)](https://github.com/keints/picopi) | 2018 (보관본 2021) | Buildroot 2017.11 | Pi 1/2/3 | 위 분석 참조. 원 사이트는 사라졌고 keints가 보관본을 올려 둠 |
 | [paloblanco/rpi-buildroot](https://github.com/paloblanco/rpi-buildroot) | 2020-05 | gamaral rpi-buildroot 포크 | Pi 1/2/3 | PICOPi 빌드 산출물 재배포, 기능 변경 없음 |
 | [billyohgren/pico-8-nano-2w](https://github.com/billyohgren/pico-8-nano-2w) | 2026-09 | Buildroot 2026.02.3 | Zero 2 W만 | 가장 유사함. armhf, SDL2 KMSDRM + vc4, **squashfs 읽기 전용 루트 + ext4 `/data`**, Wi-Fi(`wifi.txt`), SSH. 키맵 없음, busybox wget(HTTPS 미지원, Buildroot 기본 설정), "실기기 부팅 미검증"이라고 명시 |
@@ -66,14 +67,14 @@
 ### B. PICO-8 전용 런처 / 다른 하드웨어용 최소 OS
 
 | 프로젝트 | 내용 |
-|---|---|
+| --- | --- |
 | [pex-labs/picolauncher](https://github.com/pex-labs/picolauncher) (2025-04) | PeX Console용 PICO-8 기반 런처와 "OS"(Rust). Splore를 새로 만들고 갤러리를 넣음. x86_64, aarch64, armv7 바이너리 제공. 현재 Chromium이 필요함 |
 | [eczarny/picosh](https://github.com/eczarny/picosh) (2023-03) | ClockworkPi GameShell용 최소 PICO-8 OS (multistrap 기반) |
 
 ### C. PICO-8 정품 바이너리를 쓸 수 있는 범용 레트로 OS
 
 | OS | PICO-8 지원 방식 |
-|---|---|
+| --- | --- |
 | [Batocera](https://wiki.batocera.org/systems:pico8) | 정품 바이너리를 `bios`에 넣음. 오픈소스 코어(fake-08/retro8)도 있음 |
 | [Recalbox](https://wiki.recalbox.com/en/emulators/fantasy/pico-8) | 정품 바이너리를 BIOS 폴더에 넣으면 사용 가능. 기본은 retro8, 대안은 fake-08 |
 | RetroPie | 수동 설정 (EmulationStation 시스템 항목 추가) |
