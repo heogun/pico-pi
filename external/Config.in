@@ -1,4 +1,5 @@
 source "$BR2_EXTERNAL_PICO8OS_PATH/package/pico8-hotkey/Config.in"
+source "$BR2_EXTERNAL_PICO8OS_PATH/package/pico8os-tryboot/Config.in"
 source "$BR2_EXTERNAL_PICO8OS_PATH/package/sdl-gamecontrollerdb/Config.in"
 
 config BR2_PACKAGE_PICO8OS_SDL2_HIDAPI

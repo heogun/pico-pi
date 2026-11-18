@@ -10,7 +10,8 @@
 #            JOYSTICK_XPAD, HID_SONY/PLAYSTATION/NINTENDO/MICROSOFT/STEAM...
 #   radio    BT (HCIUART/BCM, HCIBTUSB, HIDP), CFG80211, BRCMFMAC
 #   network  Ethernet drivers (SMSC95XX, LAN78XX, GENET, MACB), IPv4/IPv6
-#   system   WATCHDOG/BCM2835_WDT, HWMON (under-voltage), STAGING (vchiq)
+#   system   WATCHDOG/BCM2835_WDT, HWMON (under-voltage), STAGING (vchiq),
+#            BCM_VCIO (/dev/vcio: firmware tryboot flag for OTA updates)
 # scripts/check-kernel-trim.py verifies these against the real defconfigs.
 
 # Cameras, video capture/codecs, DVB, analog TV, radio tuners

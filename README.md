@@ -214,14 +214,23 @@ Wi-Fi 설정이 없거나 40초 안에 연결하지 못하고 유선 연결도 �
 PICOBOOT/
   config.txt   ... include slot.txt
   slot.txt     os_prefix=a/        ← 이 한 줄로 슬롯을 고름 (Pi 펌웨어 기능, 모든 모델)
+  tryboot.txt  config.txt 사본, include tryslot.txt   ← tryboot 플래그가 있는 한 번만 읽음
+  tryslot.txt  os_prefix=b/        ← 시험 중인 새 슬롯
   a/  zImage(또는 Image), *.dtb, overlays/(+README), cmdline.txt (root=…p2 pico8os.slot=a)
   b/  같은 구성, root=…p3 pico8os.slot=b
 ```
 
 1. **업데이트 파일:** 빌드할 때 `pico8os-<보드>-<버전>.pico8os-update`가 함께 나옵니다. tar 하나에 `manifest`, `manifest.sig`, `cmdline.txt.in`, `boot.tar.gz`, `rootfs.ext4.gz`가 들어 있습니다.
    `manifest`에는 보드, 버전, 각 파일의 sha256이 있고, 이 `manifest`만 ECDSA P-256으로 서명합니다.
-2. **설치(`pico8os-ota apply`):** 서명 → 보드 → **버전(지금보다 새 버전만, 다운그레이드 거부)** → 파일 해시 → 슬롯 크기를 확인합니다. 그다음 쓰지 않는 슬롯에 rootfs를 기록하고, 커널 파일을 `b.new/`에 풀어 `b/`로 바꿉니다. 마지막으로 `slot.txt`를 새 이름으로 쓴 뒤 바꿔치기합니다.
-3. **확인과 되돌리기:** 새 슬롯으로 부팅할 때마다 `S06ota`가 시도 횟수를 셉니다. PICO-8 세션이 45초 이상 돌면 `S99otagood`이 확정합니다. 3번 안에 확정되지 않으면 이전 슬롯으로 `slot.txt`를 되돌리고 재부팅합니다.
+2. **설치(`pico8os-ota apply`):** 서명 → 보드 → **버전(지금보다 새 버전만, 다운그레이드 거부)** → 파일 해시 → 슬롯 크기를 확인합니다. 그다음 쓰지 않는 슬롯에 rootfs를 기록하고, 커널 파일을 `b.new/`에 풀어 `b/`로 바꿉니다. 마지막으로 Pi에서는 `tryslot.txt`와 `tryboot.txt`를 쓰고 `slot.txt`는 그대로 둡니다(아래 3). QEMU처럼 tryboot가 없으면 `slot.txt`를 새 이름으로 쓴 뒤 바꿔치기합니다.
+3. **확인과 되돌리기 (Pi, tryboot):** 재부팅(`pico8os-ota reboot`, 웹·설정 카트의 재부팅도 이것)할 때 펌웨어의 일회용 tryboot 플래그를 켜서(`pico8os-tryboot`, `/dev/vcio`) 그 한 번만 새 슬롯으로 부팅합니다. 시도 횟수는 부팅 전에 셉니다.
+   - PICO-8 세션이 45초 이상 돌면 `S99otagood`이 `slot.txt`를 새 슬롯으로 바꿔 확정합니다.
+   - 새 슬롯이 펌웨어·커널·init 어디서 멈추든, 리셋되면 펌웨어가 `config.txt`(이전 슬롯)로 부팅합니다. 커널 패닉은 10초 뒤 저절로 재부팅하지만, 워치독(`S15watchdog`)이 켜지기 전에 완전히 멈추면 전원을 한 번 뽑았다 꽂아야 합니다.
+   - 이전 슬롯으로 돌아오면 `S06ota`가 다시 시도하고, 3번 실패하면 업데이트를 포기합니다(`error bootfailed`, 새 슬롯의 부팅 파일 삭제).
+   - 그냥 전원을 껐다 켜면(플래그 없음) 업데이트는 재부팅을 계속 기다립니다.
+   - 첫 tryboot 업데이트는 이 기능이 들어간 시스템에서 설치해야 합니다. 그 이전 버전은 `slot.txt` 방식으로 설치합니다.
+
+   **QEMU(tryboot 없음):** 새 슬롯으로 부팅할 때마다 `S06ota`가 시도 횟수를 셉니다. 3번 안에 확정되지 않으면 이전 슬롯으로 `slot.txt`를 되돌리고 재부팅합니다. init까지 가지 못하는 슬롯은 이 방식으로 복구되지 않습니다.
 4. **설치 경로:**
    - 웹 업데이트 탭에 파일 올리기
    - `PICO8DATA/`나 `PICO8DATA/ota/`에 `.pico8os-update` 넣고 재부팅(설치 후 `.installed`로 이름이 바뀜)
@@ -236,7 +245,7 @@ PICOBOOT/
    ```
 
 - 펌웨어 파일(`start*.elf`, `bootcode.bin`)은 업데이트하지 않습니다. 커널, DTB, 오버레이, rootfs만 바뀝니다.
-- QEMU에서도 같은 방식으로 동작합니다. `run-qemu.sh`가 `slot.txt`를 읽어 해당 슬롯의 커널과 cmdline으로 부팅합니다.
+- QEMU에서도 슬롯 방식은 같습니다. `run-qemu.sh`가 `slot.txt`를 읽어 해당 슬롯의 커널과 cmdline으로 부팅합니다(tryboot 없음).
 
 ## 게임패드
 
@@ -300,7 +309,7 @@ scripts/pico8-hashes.sh sign
 **하지 않은 것:**
 
 - Pi 4/5의 하드웨어 보안 부팅(secure boot): 보드 OTP에 한 번 쓰면 되돌릴 수 없어서 자동으로 켜지 않습니다.
-- 부팅 시도 횟수를 부트로더 단계에서 세지 않습니다. 새 커널이 init까지 가지 못하면 자동 롤백이 동작하지 않습니다. 이때는 PICOBOOT의 `slot.txt`를 이전 슬롯으로 고쳐야 합니다(Pi 4/5의 `tryboot`로 옮기는 작업이 남아 있음).
+- QEMU 이미지는 tryboot가 없어서, 새 커널이 init까지 가지 못하면 자동 롤백이 동작하지 않습니다. 이때는 PICOBOOT의 `slot.txt`를 이전 슬롯으로 고쳐야 합니다.
 - 공인 인증서가 아닌 자체 서명 인증서라서, 처음 접속할 때 브라우저 경고가 나옵니다(가정 내 네트워크에서는 피할 수 없음).
 
 ## 부팅 속도
@@ -377,7 +386,7 @@ external/                     BR2_EXTERNAL (name: PICO8OS)
     etc/init.d/S06ota         새 슬롯 부팅 횟수 확인/되돌리기, 넣어 둔 업데이트 파일 설치
     etc/init.d/S80pico8os      웹 서버 + 설정 카트 에이전트
     etc/init.d/S99otagood     정상 동작 확인 후 새 슬롯 확정
-    usr/sbin/pico8os-ota       OTA (verify/apply/check/download/boot-check/mark-good/rollback)
+    usr/sbin/pico8os-ota       OTA (verify/apply/check/download/boot-check/mark-good/rollback/reboot)
     usr/sbin/pico8os-web       웹 서버 시작 (인증 / AP 모드)
     usr/sbin/pico8os-wifi      Wi-Fi 클라이언트 / 설정용 AP / 검색
     usr/sbin/pico8os-agent     설정 카트 요청 처리, 상태 카트 생성

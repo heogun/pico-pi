@@ -144,7 +144,7 @@ handle() {
 			( f=$(pico8os-ota download 2>/dev/null) && [ -n "$f" ] && pico8os-ota apply "$f" && rm -f "$f" ) >/dev/null 2>&1 &
 			MSG="downloading" ;;
 		restart|exit) restart_pico8 ;;
-		reboot) reboot ;;
+		reboot) pico8os-ota reboot ;;
 		poweroff) poweroff ;;
 		*) MSG="error" ;;     # never echo request text back
 	esac
@@ -216,7 +216,7 @@ priv_run() {
 				settings) restart_pico8 settings ;;
 				*) return 2 ;;
 			esac ;;
-		reboot) ( sleep 1; reboot ) >/dev/null 2>&1 & ;;
+		reboot) ( sleep 1; pico8os-ota reboot ) >/dev/null 2>&1 & ;;
 		poweroff) ( sleep 1; poweroff ) >/dev/null 2>&1 & ;;
 		bt_list) bluetoothctl devices Paired ;;
 		bt_pair) ( pico8-btpair 90 >/dev/null 2>&1 & ) ;;
