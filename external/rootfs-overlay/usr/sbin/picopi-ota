@@ -4,7 +4,7 @@
 #   picopi-ota status              print state (key=value)
 #   picopi-ota verify FILE         check signature, board and payload hashes
 #   picopi-ota apply FILE          verify, write the inactive slot, switch to it
-#   picopi-ota check               ask OTA_URL for a newer version
+#   picopi-ota check               ask OTA_URL/latest-<board>.txt for a newer version
 #   picopi-ota download            download it to /data/ota/ (then: apply)
 #   picopi-ota boot-check          early boot: count tries of a new slot, roll back
 #   picopi-ota mark-good           the new slot works: make it permanent
@@ -132,11 +132,13 @@ mark_good() {
 	progress updated "$ver"
 }
 
-# OTA_URL/<board>/latest.txt:  version=...  url=...  (url may be relative)
+# OTA_URL/latest-<board>.txt:  version=...  url=...  (url may be relative to
+# OTA_URL). Flat, so a GitHub Release works as the server:
+#   OTA_URL=https://github.com/<user>/<repo>/releases/latest/download
 check() {
 	[ -n "$OTA_URL" ] || die nourl
 	mkdir -p "$RUN"
-	wget -q -O "$RUN/latest.txt" "${OTA_URL%/}/$(os_board)/latest.txt" || die unreachable
+	wget -q -O "$RUN/latest.txt" "${OTA_URL%/}/latest-$(os_board).txt" || die unreachable
 	v=$(manifest_get version "$RUN/latest.txt")
 	[ -n "$v" ] || die badlatest
 	if [ "$v" \> "$(os_version)" ]; then
@@ -150,7 +152,7 @@ download() {
 	check
 	[ -f "$RUN/ota.available" ] || return 0
 	u=$(manifest_get url "$RUN/latest.txt")
-	case $u in http://*|https://*) ;; *) u="${OTA_URL%/}/$(os_board)/$u" ;; esac
+	case $u in http://*|https://*) ;; *) u="${OTA_URL%/}/$u" ;; esac
 	mkdir -p "$DATA/ota"
 	progress downloading "$(cat "$RUN/ota.available")"
 	wget -q -O "$DATA/ota/download.picopi-update.part" "$u" || die download

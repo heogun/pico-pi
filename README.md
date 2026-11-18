@@ -50,6 +50,30 @@ make rpi4
 처음 빌드할 때는 툴체인, 커널, Mesa를 받아서 빌드하므로 수십 분에서 1시간 넘게 걸립니다.
 
 - 설정 변경: `make menuconfig-rpi4`
+- 빌드 없이 빠른 검사: `scripts/check.sh` (스크립트 문법, 실행 권한, 6개 보드 Buildroot 옵션, 카트 Lua, 웹 번역)
+
+### GitHub Actions
+
+| 워크플로 | 실행 시점 | 하는 일 |
+|---|---|---|
+| `check` | `main` 푸시, PR | `scripts/check.sh` (몇 분) |
+| `build` | `v*` 태그 푸시, 또는 Actions 탭에서 수동 실행(보드 선택 가능) | 보드마다 별도 작업으로 전체 이미지 빌드 → 아티팩트(14일 보관). 태그일 때는 GitHub Release도 만듦 |
+
+- 결과물(보드마다): `picopi-<보드>-<버전>.img.xz`(SD카드 이미지), `picopi-<보드>-<버전>.picopi-update`(OTA), `latest-<보드>.txt`, SHA256SUMS
+- 다운로드, Buildroot 소스, ccache는 Actions 캐시로 재사용합니다(`EXTRA_CONFIG`로 CI에서만 ccache를 켬). 빌드는 러너의 큰 `/mnt` 디스크에서 합니다.
+- **OTA 서명 키:** 저장소 시크릿 `OTA_PRIVATE_KEY`에 `keys/ota-private.pem` 내용을 넣으세요.
+  ```bash
+  make keys
+  ```
+  ```bash
+  gh secret set OTA_PRIVATE_KEY < keys/ota-private.pem
+  ```
+  시크릿이 없으면 수동 빌드는 일회용 키로 만들어집니다(그 이미지로 구운 콘솔은 OTA 업데이트를 받을 수 없음). 태그 빌드는 시크릿이 없으면 실패합니다.
+- **릴리스 만들기:**
+  ```bash
+  git tag v0.1.0 && git push origin v0.1.0
+  ```
+- **사용 시간:** 보드 하나의 첫 빌드는 1~2시간 이상 걸릴 수 있습니다(툴체인, 커널, Mesa). 6개 보드 전체 빌드는 Actions 사용 시간을 많이 씁니다. 비공개 저장소의 무료 사용량은 월 2,000분이므로 필요한 보드만 수동으로 빌드하는 것이 좋습니다. 공개 저장소는 무료입니다.
 - 이미지에 PICO-8 미리 넣기: `pico8/`에 zip(또는 `pico-8/` 폴더)을 두고 빌드합니다. **이렇게 만든 이미지는 배포하면 안 됩니다** (Lexaloffle 라이선스).
 - 기본 카트 넣기: `carts/`에 `.p8`이나 `.p8.png`를 둡니다.
 
@@ -175,8 +199,10 @@ PICOBOOT/
 4. **설치 경로:**
    - 웹 업데이트 탭에 파일 올리기
    - `PICO8DATA/`나 `PICO8DATA/ota/`에 `.picopi-update` 넣고 재부팅(설치 후 `.installed`로 이름이 바뀜)
-   - 온라인: `OTA_URL`을 설정하면 `<OTA_URL>/<보드>/latest.txt`(`version=…`, `url=…`)를 확인해 받아 설치(웹 또는 설정 카트)
-5. **업데이트 서버:** 정적 파일 서버면 충분합니다. 예: `rpi4/latest.txt`와 `rpi4/picopi-rpi4-2026.12.01-0900.picopi-update`.
+   - 온라인: `OTA_URL`을 설정하면 `<OTA_URL>/latest-<보드>.txt`(`version=…`, `url=…`)를 확인해 받아 설치(웹 또는 설정 카트)
+5. **업데이트 서버:** 정적 파일 서버면 충분합니다. 예: `latest-rpi4.txt`와 `picopi-rpi4-2026.12.01-0900.picopi-update`를 한 폴더에 둡니다.
+   **GitHub Release를 그대로 서버로 쓸 수 있습니다:** `OTA_URL=https://github.com/<계정>/<저장소>/releases/latest/download`.
+   단, 공개 저장소일 때만 됩니다. 비공개 저장소의 릴리스 파일은 로그인해야 받을 수 있어서 콘솔이 받지 못합니다.
    ```
    version=2026.12.01-0900
    url=picopi-rpi4-2026.12.01-0900.picopi-update

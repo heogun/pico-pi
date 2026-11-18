@@ -51,5 +51,6 @@ WIFI_COUNTRY=KR
 # in the settings screen (Ctrl+Alt+S, or hold SELECT for 2 s).
 WEB_PASSWORD=
 
-# Online updates: <OTA_URL>/<board>/latest.txt (see README). Empty = off.
+# Online updates: <OTA_URL>/latest-<board>.txt (see README). Empty = off.
+# GitHub Releases: https://github.com/<user>/<repo>/releases/latest/download
 OTA_URL=

@@ -1,0 +1,175 @@
+# Full image builds. Runs on version tags (v*) and by hand (Actions tab →
+# build → Run workflow). Each board builds in its own job; a tag also
+# publishes a GitHub Release with the SD card images and the OTA files
+# (picopi-<board>-<version>.picopi-update + latest-<board>.txt), so
+#   OTA_URL=https://github.com/<owner>/<repo>/releases/latest/download
+# works as the update server (public repositories only: consoles cannot
+# log in to download from a private one).
+#
+# OTA signing: set the repository secret OTA_PRIVATE_KEY to the contents of
+# keys/ota-private.pem (`make keys`, then `gh secret set OTA_PRIVATE_KEY <
+# keys/ota-private.pem`). Without it, manual builds use a throw-away key
+# (their consoles can never take OTA updates); tag builds refuse to run.
+name: build
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      boards:
+        description: 'Boards to build (space separated)'
+        default: 'rpi0 rpi2 rpi3 rpi4 rpi5 qemu'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    outputs:
+      boards: ${{ steps.plan.outputs.boards }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - id: plan
+        env:
+          BOARDS: ${{ github.event_name == 'workflow_dispatch' && inputs.boards || 'rpi0 rpi2 rpi3 rpi4 rpi5 qemu' }}
+        run: |
+          set -eu
+          json='['
+          for b in $BOARDS; do
+            case $b in
+              rpi0|rpi2|rpi3|rpi4|rpi5|qemu) json="$json\"$b\"," ;;
+              *) echo "::error::unknown board '$b' (use rpi0 rpi2 rpi3 rpi4 rpi5 qemu)"; exit 1 ;;
+            esac
+          done
+          [ "$json" != '[' ] || { echo "::error::no boards given"; exit 1; }
+          echo "boards=${json%,}]" >> "$GITHUB_OUTPUT"
+          # one version for every board of this run (sortable, newer = greater)
+          echo "version=$(date -u +%Y.%m.%d-%H%M)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: setup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        board: ${{ fromJSON(needs.setup.outputs.boards) }}
+    env:
+      BOARD: ${{ matrix.board }}
+      PICOPI_VERSION: ${{ needs.setup.outputs.version }}
+      BR2_DL_DIR: /mnt/picopi/dl
+      OUT_ROOT: /mnt/picopi/output
+      CCACHE_DIR: /mnt/picopi/ccache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare disk
+        # Buildroot needs ~15 GB per board: build on the runner's /mnt disk.
+        run: |
+          sudo mkdir -p /mnt/picopi
+          sudo chown "$(id -u):$(id -g)" /mnt/picopi
+          mkdir -p "$BR2_DL_DIR" "$OUT_ROOT" "$CCACHE_DIR"
+          df -h / /mnt
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential bc bison flex libncurses-dev libssl-dev rsync cpio \
+            unzip file wget python3 perl patch xz-utils openssl
+
+      - name: Cache Buildroot source
+        uses: actions/cache@v4
+        with:
+          path: buildroot
+          key: buildroot-src-${{ hashFiles('Makefile') }}
+
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: /mnt/picopi/dl
+          key: dl-${{ matrix.board }}-${{ hashFiles('Makefile', 'external/**/*.config', 'external/**/*.mk', 'external/**/*.hash') }}
+          restore-keys: |
+            dl-${{ matrix.board }}-
+            dl-
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: /mnt/picopi/ccache
+          key: ccache-${{ matrix.board }}-${{ github.run_id }}
+          restore-keys: ccache-${{ matrix.board }}-
+
+      - name: OTA signing key
+        env:
+          OTA_PRIVATE_KEY: ${{ secrets.OTA_PRIVATE_KEY }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          set -eu
+          mkdir -p keys
+          if [ -n "$OTA_PRIVATE_KEY" ]; then
+            umask 077
+            printf '%s\n' "$OTA_PRIVATE_KEY" > keys/ota-private.pem
+            openssl ec -in keys/ota-private.pem -pubout -out keys/ota-public.pem 2>/dev/null
+            echo "Using OTA key from the OTA_PRIVATE_KEY secret"
+          elif [ "$IS_TAG" = true ]; then
+            echo "::error::Release builds need the OTA_PRIVATE_KEY secret (see the comment at the top of build.yml)"
+            exit 1
+          else
+            make keys
+            echo "::warning::No OTA_PRIVATE_KEY secret: built with a throw-away key. Consoles flashed with these images cannot install OTA updates."
+          fi
+
+      - name: Build ${{ matrix.board }}
+        run: |
+          printf 'BR2_CCACHE=y\nBR2_CCACHE_DIR="%s"\n' "$CCACHE_DIR" > ci.config
+          make "$BOARD" OUT_ROOT="$OUT_ROOT" EXTRA_CONFIG="$PWD/ci.config"
+
+      - name: Package
+        run: |
+          set -eu
+          mkdir -p upload
+          xz -T0 -6 -c "dist/picopi-$BOARD.img" > "upload/picopi-$BOARD-$PICOPI_VERSION.img.xz"
+          upd="picopi-$BOARD-$PICOPI_VERSION.picopi-update"
+          cp "dist/$upd" upload/
+          printf 'version=%s\nurl=%s\n' "$PICOPI_VERSION" "$upd" > "upload/latest-$BOARD.txt"
+          (cd upload && sha256sum * > "SHA256SUMS-$BOARD")
+          ls -la upload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: picopi-${{ matrix.board }}-${{ needs.setup.outputs.version }}
+          path: upload/*
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [setup, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          set -eu
+          cat release/SHA256SUMS-* > release/SHA256SUMS && rm release/SHA256SUMS-*
+          gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" \
+            --title "PICO-PI $TAG ($VERSION)" \
+            --notes "SD card images (picopi-<board>-$VERSION.img.xz) and OTA updates (.picopi-update) for each board. PICO-8 itself is not included."

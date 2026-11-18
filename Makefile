@@ -8,6 +8,8 @@ BR_DIR     ?= $(CURDIR)/buildroot
 OUT_ROOT   ?= $(CURDIR)/output
 DIST_DIR   ?= $(CURDIR)/dist
 EXT        := $(CURDIR)/external
+# Extra Kconfig fragment appended to every board (CI uses it for ccache).
+EXTRA_CONFIG ?=
 KEYS       := $(CURDIR)/keys
 
 # Image/OTA version: sortable as text (newer = greater).
@@ -115,10 +117,10 @@ $(BR_DIR)/Makefile:
 
 # $(1) = board
 define BOARD_RULES
-$(OUT_ROOT)/$(1)/.config: $(BR_DIR)/Makefile $(addprefix $(EXT)/fragments/,$(addsuffix .config,$(frags_$(1))))
+$(OUT_ROOT)/$(1)/.config: $(BR_DIR)/Makefile $(addprefix $(EXT)/fragments/,$(addsuffix .config,$(frags_$(1)))) $(EXTRA_CONFIG)
 	mkdir -p $(OUT_ROOT)/$(1)
 	cat $(if $(base_$(1)),$(BR_DIR)/configs/$(base_$(1))) \
-		$(addprefix $(EXT)/fragments/,$(addsuffix .config,$(frags_$(1)))) \
+		$(addprefix $(EXT)/fragments/,$(addsuffix .config,$(frags_$(1)))) $(EXTRA_CONFIG) \
 		> $(OUT_ROOT)/$(1)/picopi_defconfig
 	$(MAKE) -C $(BR_DIR) O=$(OUT_ROOT)/$(1) BR2_EXTERNAL=$(EXT) \
 		BR2_DEFCONFIG=$(OUT_ROOT)/$(1)/picopi_defconfig defconfig
