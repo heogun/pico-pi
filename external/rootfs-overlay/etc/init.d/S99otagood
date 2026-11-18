@@ -1,10 +1,40 @@
 #!/bin/sh
-# A new system slot is "good" once the console has been up for a while with
-# the PICO-8 session running; until then S06ota counts it as a failed try.
+# A new system slot is "good" once the console has really started and stayed
+# up for STABLE seconds as the same process:
+#   - a PICO-8 process (pico8_64 / pico8_dyn / pico8), or
+#   - while PICO-8 is not installed, the installer's waiting screen: only
+#     the PID pico8-install itself writes to $RUN/install-waiting when it
+#     shows that screen (not while it checks or installs a package).
+# The session launcher alone is not enough: it also runs while PICO-8
+# crash-loops, and a crash loop changes the PID every time, so it never
+# counts. If nothing is steady within WINDOW seconds the slot stays on
+# trial (S06ota and the firmware tryboot decide at the next boot).
 [ "$1" = start ] || exit 0
 [ -f /state/ota/pending ] || exit 0
+. /usr/lib/pico8os/lib.sh
+STABLE=45 WINDOW=600 STEP=5
+
+# ready_id: "game:PID" / "install:PID" of what is on screen, or nothing.
+ready_id() {
+	p=$(pidof pico8_64 pico8_dyn pico8 2>/dev/null) && { echo "game:${p%% *}"; return; }
+	w=$(cat "$RUN/install-waiting" 2>/dev/null)
+	case $w in ''|*[!0-9]*) return ;; esac
+	[ "$(cat "/proc/$w/comm" 2>/dev/null)" = pico8-install ] && echo "install:$w"
+}
+
 (
-	sleep 45
-	pidof pico8-session >/dev/null 2>&1 && pico8os-ota mark-good
-) &
+	last='' up=0 t=0
+	while [ $t -lt $WINDOW ]; do
+		id=$(ready_id)
+		if [ -n "$id" ] && [ "$id" = "$last" ]; then up=$((up + STEP)); else up=0; fi
+		last=$id
+		if [ $up -ge $STABLE ]; then
+			pico8os-ota mark-good
+			exit 0
+		fi
+		sleep $STEP; t=$((t + STEP))
+	done
+	mkdir -p "$DATA/logs"
+	echo "$(date '+%F %T') PICO-8 never ran steadily for ${STABLE}s; slot stays on trial" >> "$DATA/logs/ota.log"
+) </dev/null >/dev/null 2>&1 &
 exit 0

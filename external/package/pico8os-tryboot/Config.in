@@ -1,0 +1,8 @@
+config BR2_PACKAGE_PICO8OS_TRYBOOT
+	bool "pico8os-tryboot"
+	help
+	  Set or clear the Raspberry Pi firmware's one-shot tryboot
+	  flag (through /dev/vcio), so the next boot uses tryboot.txt
+	  instead of config.txt. Used by pico8os-ota to boot a freshly
+	  installed system slot once: if it hangs before the kernel
+	  or init, a reset boots the previous slot again.

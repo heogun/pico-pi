@@ -7,9 +7,11 @@
 #   pico8os-ota check               ask OTA_URL/latest-<board>.txt for a newer version
 #   pico8os-ota download            download it to /data/ota/ (then: apply)
 #   pico8os-ota boot-check          early boot: count tries of a new slot, roll back
+#                                   (exit 3: rebooting now)
 #   pico8os-ota mark-good           the new slot works: make it permanent
 #   pico8os-ota rollback            boot the other slot (if it is installed) or
 #                                   cancel an update that waits for a reboot
+#   pico8os-ota reboot              reboot; into a new slot on trial if one waits
 #
 # A slot can be booted only while its boot files are complete
 # (/boot/<slot>/cmdline.txt). They are removed before the slot is written
@@ -17,6 +19,20 @@
 # filesystem was read back and matched the signed hash; a slot that failed
 # its boot tries loses them too. slot.txt never points at a slot without
 # them.
+#
+# Two ways to start a new slot:
+#   try   (Raspberry Pi: pico8os-tryboot and "include slot.txt" in
+#         config.txt) slot.txt keeps naming the running slot. tryslot.txt
+#         names the new one and tryboot.txt is config.txt with
+#         "include tryslot.txt". "pico8os-ota reboot" sets the firmware's
+#         one-shot tryboot flag, so only that one boot uses the new slot: if
+#         it hangs anywhere (firmware, kernel, init), a reset or the
+#         watchdog boots the old slot. mark-good then writes slot.txt. Back
+#         on the old slot after a try, boot-check tries again, up to
+#         MAX_TRIES, then gives the update up.
+#   flip  (QEMU, other boards) slot.txt names the new slot at once and
+#         boot-check counts its boots, rolling back after MAX_TRIES. A slot
+#         that stops before init is not counted there.
 #
 # Bundle (tar): manifest, manifest.sig (ECDSA P-256 over manifest),
 # cmdline.txt.in, boot.tar.gz (kernel, DTBs, overlays), rootfs.ext4.gz.
@@ -31,7 +47,8 @@
 #   valid VER | updated VER | uptodate VER | available VER | downloading VER
 #   rolledback | error CODE [args]   (CODE: nofile notupdate unsigned badsig
 #   format board older corrupt nofit write bootmount bootfiles nourl
-#   unreachable badlatest download toolarge nospace busy verifywrite noslot)
+#   unreachable badlatest download toolarge nospace busy verifywrite noslot
+#   state bootfailed cancelfailed)
 . /usr/lib/pico8os/lib.sh
 load_config
 
@@ -41,8 +58,10 @@ STATUS="$RUN/ota.status"
 LOG="$DATA/logs/ota.log"
 MAX_TRIES=3
 
-log() { mkdir -p "$DATA/logs"; echo "$(date '+%F %T') $*" >> "$LOG"; }
-progress() { mkdir -p "$RUN"; printf '%s\n' "$*" > "$STATUS"; log "$*"; }
+# Diagnostics only: they never fail, so a full or broken log never changes
+# what an OTA step decides (a function ending in log still returns 0).
+log() { { mkdir -p "$DATA/logs" && echo "$(date '+%F %T') $*" >> "$LOG"; } 2>/dev/null; return 0; }
+progress() { { mkdir -p "$RUN" && printf '%s\n' "$*" > "$STATUS"; } 2>/dev/null; log "$*"; }
 die() { progress "error $*"; echo "pico8os-ota: error $*" >&2; exit 1; }   # cleanup: trap
 
 mount_boot() {
@@ -70,15 +89,57 @@ unboot_slot() {
 	sync
 }
 
-# pending_write SLOT PREVIOUS VERSION TRIES: rewrite + rename, so a power
-# cut never leaves a half-written state.
+# pending_write SLOT PREVIOUS VERSION TRIES [MODE]: rewrite + rename, so a power
+# cut never leaves a half-written state. Fails unless every step worked and
+# the file reads back with this slot and count (a full /state or an I/O
+# error must not pass as saved: without it the boots are not counted).
 pending_write() {
-	mkdir -p "$STATE"
-	printf 'slot=%s\nprevious=%s\nversion=%s\ntries=%s\n' "$1" "$2" "$3" "$4" > "$STATE/pending.new"
-	sync; mv "$STATE/pending.new" "$STATE/pending"; sync
+	mkdir -p "$STATE" \
+		&& printf 'slot=%s\nprevious=%s\nversion=%s\ntries=%s\nmode=%s\n' "$1" "$2" "$3" "$4" "${5:-flip}" > "$STATE/pending.new" \
+		&& sync && mv -f "$STATE/pending.new" "$STATE/pending" && sync \
+		|| { rm -f "$STATE/pending.new"; return 1; }
+	[ "$(manifest_get slot "$STATE/pending")" = "$1" ] && [ "$(manifest_get tries "$STATE/pending")" = "$4" ]
 }
+# pending_clear: forget the pending update; fails if the file is still there.
+pending_clear() { rm -f "$STATE/pending"; sync; [ ! -e "$STATE/pending" ]; }
 
 manifest_get() { sed -n "s/^$1=//p" "$2" | head -n 1; }
+
+# ---- firmware tryboot (with /boot mounted) ----
+TRYBOOT=${TRYBOOT:-/usr/sbin/pico8os-tryboot}
+# tryboot_capable: this board can boot a slot once (see "try" above).
+tryboot_capable() {
+	[ -x "$TRYBOOT" ] && [ -c "${VCIO:-/dev/vcio}" ] \
+		&& tr -d '\r' < /boot/config.txt 2>/dev/null | grep -qx 'include slot.txt'
+}
+# tryboot_files SLOT: tryboot.txt from the current config.txt (so later
+# edits of config.txt carry over) and tryslot.txt naming SLOT, which must be
+# bootable. Both written to a new name and renamed.
+tryboot_files() {
+	slot_bootable "$1" || return 1
+	tr -d '\r' < /boot/config.txt | sed 's#^include slot\.txt$#include tryslot.txt#' > /boot/tryboot.txt.new \
+		&& grep -qx 'include tryslot.txt' /boot/tryboot.txt.new \
+		&& echo "os_prefix=$1/" > /boot/tryslot.txt.new && sync \
+		&& mv -f /boot/tryboot.txt.new /boot/tryboot.txt && mv -f /boot/tryslot.txt.new /boot/tryslot.txt && sync \
+		|| { rm -f /boot/tryboot.txt.new /boot/tryslot.txt.new; return 1; }
+}
+# tryboot_disarm: a tryboot flag left set (an update given up or replaced)
+# must boot what slot.txt names: clear the flag and point tryslot.txt
+# there. Succeeds only if the next boot is shown to be that slot: the flag
+# read back as off (or this system cannot set one), or tryslot.txt read
+# back naming the bootable slot slot.txt names.
+tryboot_disarm() {
+	flag_off='' try_safe=''
+	if [ ! -x "$TRYBOOT" ] || "$TRYBOOT" clear >/dev/null 2>&1; then flag_off=1; fi
+	t=$(boot_target)
+	if [ -f /boot/tryslot.txt ] && [ -n "$t" ]; then
+		echo "os_prefix=$t/" > /boot/tryslot.txt.new && mv -f /boot/tryslot.txt.new /boot/tryslot.txt
+		sync
+		[ "$(sed -n 's#^os_prefix=\([ab]\)/$#\1#p' /boot/tryslot.txt 2>/dev/null)" = "$t" ] \
+			&& slot_bootable "$t" && try_safe=1
+	fi
+	[ -n "$flag_off" ] || [ -n "$try_safe" ]
+}
 
 # ---- limits and locking ----
 OTA_LOCK="$RUN/ota.lock"
@@ -90,9 +151,11 @@ DATA_RESERVE_MB=32      # keep this much of PICO8DATA free when downloading
 # one): flock on fd 9, released by the kernel when the process ends, so a
 # crashed run never leaves a stale lock. "wait" blocks instead of failing.
 ota_lock() {
+	[ -n "${OTA_LOCKED:-}" ] && return 0    # held already (boot-check -> reboot)
 	mkdir -p "$RUN"
 	exec 9> "$OTA_LOCK" || die busy
 	if [ "${1:-}" = wait ]; then flock 9 || die busy; else flock -n 9 || die busy; fi
+	OTA_LOCKED=1
 }
 cleanup() {
 	[ -n "${WORK:-}" ] && { umount "$WORK" 2>/dev/null; rm -rf "$WORK"; }
@@ -193,6 +256,10 @@ apply() {
 	if [ -f "$STATE/pending" ] && [ "$(manifest_get slot "$STATE/pending")" = "$cur" ]; then
 		die busy
 	fi
+	# The boot tries of the new slot are counted in $STATE/pending: with
+	# /state on the RAM fallback (picostate not mounted) they would be lost
+	# at the reboot, so no update is installed then.
+	state_is_persistent || die state
 	progress verifying
 	verify "$f"
 	ver=$(manifest_get version "$WORK/manifest")
@@ -201,9 +268,9 @@ apply() {
 	# a scheduled update into it is forgotten) until it is written and
 	# checked.
 	mount_boot || die bootmount
-	{ write_slot "$cur" && unboot_slot "$new"; } || { umount_boot; die bootfiles; }
+	{ write_slot "$cur" && tryboot_disarm && unboot_slot "$new"; } || { umount_boot; die bootfiles; }
 	umount_boot
-	rm -f "$STATE/pending"; sync
+	pending_clear || die state
 	progress writing "$ver" "$new"
 	write_rootfs "$f" "$part"
 	progress kernel "$new"
@@ -215,10 +282,63 @@ apply() {
 	sync
 	mv "/boot/$new.new" "/boot/$new" || { umount_boot; die bootfiles; }
 	sync
-	pending_write "$new" "$cur" "$ver" 0
-	write_slot "$new" || { rm -f "$STATE/pending"; umount_boot; die bootfiles; }
+	# Only a slot whose tries are counted may be booted. If the state cannot
+	# be saved, keep the running slot and make the new one unbootable, so
+	# not even a manual rollback starts it uncounted.
+	mode=flip; tryboot_capable && mode=try
+	if ! pending_write "$new" "$cur" "$ver" 0 "$mode"; then
+		pending_clear; unboot_slot "$new"; umount_boot; die state
+	fi
+	if [ "$mode" = try ]; then
+		# slot.txt stays on $cur; "pico8os-ota reboot" boots $new once
+		tryboot_files "$new" || { pending_clear; unboot_slot "$new"; umount_boot; die bootfiles; }
+	else
+		write_slot "$new" || { pending_clear; umount_boot; die bootfiles; }
+	fi
 	umount_boot
+	log "slot $new ready ($mode)"
 	progress ready "$ver"
+}
+
+# Reboot. With an update in "try" mode waiting (or on trial), the next boot
+# is a one-shot tryboot of its slot, counted in tries before it starts; past
+# MAX_TRIES, or if anything fails, a plain reboot into slot.txt.
+do_reboot() {
+	ota_lock wait
+	if [ -f "$STATE/pending" ] && [ "$(manifest_get mode "$STATE/pending")" = try ]; then
+		tryboot_arm || log "plain reboot: no tryboot"
+	fi
+	sync
+	reboot
+}
+# tryboot_arm: set the flag for the pending slot and count the try.
+tryboot_arm() {
+	slot=$(manifest_get slot "$STATE/pending")
+	prev=$(manifest_get previous "$STATE/pending")
+	ver=$(manifest_get version "$STATE/pending")
+	tries=$(manifest_get tries "$STATE/pending")
+	case $tries in ''|*[!0-9]*) tries=0 ;; esac
+	[ "$tries" -lt "$MAX_TRIES" ] || return 1
+	mount_boot || return 1
+	if ! tryboot_files "$slot"; then umount_boot; return 1; fi
+	umount_boot
+	# The try is on disk before the flag can start it: a reset at any point
+	# never boots a try that was not counted.
+	pending_write "$slot" "$prev" "$ver" $((tries + 1)) try || return 1
+	if ! "$TRYBOOT" set >/dev/null 2>&1; then
+		# "set" failing does not prove the flag is off (it may be set and
+		# only the read-back failed). Give the try back only once "clear"
+		# read the flag back as off; otherwise the next reset may still be
+		# this try, and it stays counted.
+		if "$TRYBOOT" clear >/dev/null 2>&1; then
+			pending_write "$slot" "$prev" "$ver" "$tries" try
+		else
+			log "tryboot flag state unknown; try $((tries + 1)) stays counted"
+		fi
+		return 1
+	fi
+	log "tryboot of slot $slot (try $((tries + 1))/$MAX_TRIES)"
+	return 0
 }
 
 # Early boot (S06ota), no network needed: count the boots of a freshly
@@ -236,6 +356,7 @@ boot_check() {
 		ab|ba) ;;
 		*) log "bad pending state; dropping it"; rm -f "$STATE/pending"; sync; return 0 ;;
 	esac
+	[ "$(manifest_get mode "$STATE/pending")" = try ] && { boot_check_try; return 0; }
 	if [ "$(current_slot)" != "$slot" ]; then
 		# The firmware booted the other slot (rollback, slot.txt edited by
 		# hand): the update is not running, forget it.
@@ -244,20 +365,72 @@ boot_check() {
 	fi
 	tries=$((tries + 1))
 	if [ "$tries" -gt "$MAX_TRIES" ]; then
-		log "slot $slot failed $MAX_TRIES boots: rolling back to $prev"
-		mount_boot || die bootmount
-		if ! write_slot "$prev"; then
-			umount_boot
-			log "previous slot $prev cannot boot; staying on $slot"
-			rm -f "$STATE/pending"; sync; return 0
-		fi
-		unboot_slot "$slot"     # running from RAM; its kernel is not needed now
-		umount_boot
-		rm -f "$STATE/pending"; sync
-		reboot; exit 0
+		boot_rollback "slot $slot failed $MAX_TRIES boots"
+	elif ! pending_write "$slot" "$prev" "$ver" "$tries"; then
+		# A try that cannot be counted could repeat forever: treat the
+		# unsaved count like a failed boot and go back now.
+		boot_rollback "cannot save try $tries of slot $slot"
 	fi
-	pending_write "$slot" "$prev" "$ver" "$tries"
 	log "booting new slot $slot (try $tries/$MAX_TRIES)"
+}
+
+# boot_check in "try" mode (each try was counted when it was armed).
+boot_check_try() {
+	case $(current_slot) in
+		"$slot")
+			mount_boot || die bootmount
+			t=$(boot_target); umount_boot
+			if [ "$t" = "$slot" ]; then
+				# mark-good wrote slot.txt but could not clear the state
+				log "slot $slot is booted by slot.txt; update done"
+				pending_clear; return 0
+			fi
+			log "trying slot $slot (try $tries/$MAX_TRIES)" ;;
+		"$prev")
+			# not tried yet: the update waits for "pico8os-ota reboot"
+			[ "$tries" -gt 0 ] || return 0
+			if [ "$tries" -lt "$MAX_TRIES" ]; then
+				log "try $tries of slot $slot did not finish: trying again"
+				# Reboot only into an armed and counted try. Without one a
+				# reboot would come back here with the same count, forever:
+				# keep running this (good) slot instead.
+				if tryboot_arm; then sync; reboot; exit 3; fi
+				log "cannot start another try of slot $slot; staying on $prev"
+				progress "error notryboot $ver"
+				return 0
+			fi
+			log "slot $slot failed $tries tries: giving up update $ver"
+			# The state is dropped only once no later boot can reach the
+			# failed slot; otherwise it stays, and the next boot (which
+			# never reboots from here) tries this cleanup again.
+			if mount_boot && tryboot_disarm && unboot_slot "$slot"; then
+				umount_boot
+				pending_clear
+				progress "error bootfailed $ver"   # not die: the boot goes on
+			else
+				umount_boot
+				log "cannot make slot $slot unbootable; keeping the update state"
+				progress "error cancelfailed $ver"
+			fi ;;
+	esac
+}
+
+# boot_rollback REASON (boot_check, with $slot and $prev): boot $prev again
+# and make $slot unbootable; if $prev cannot boot, stay on $slot.
+boot_rollback() {
+	log "$1: rolling back to $prev"
+	mount_boot || die bootmount
+	if ! write_slot "$prev"; then
+		umount_boot
+		log "previous slot $prev cannot boot; staying on $slot"
+		pending_clear; return 0
+	fi
+	unboot_slot "$slot"     # running from RAM; its kernel is not needed now
+	umount_boot
+	# best effort: on the next boot $slot is not running, so a pending
+	# file left behind is dropped then
+	pending_clear
+	reboot; exit 3
 }
 
 # The new slot works (S99otagood: up for a while with the PICO-8 session
@@ -268,7 +441,15 @@ mark_good() {
 	[ -f "$STATE/pending" ] || return 0
 	[ "$(manifest_get slot "$STATE/pending")" = "$(current_slot)" ] || return 0
 	ver=$(manifest_get version "$STATE/pending")
-	rm -f "$STATE/pending"; sync
+	if [ "$(manifest_get mode "$STATE/pending")" = try ]; then
+		# make the trial slot the one config.txt boots
+		mount_boot || die bootmount
+		{ write_slot "$(current_slot)" && tryboot_disarm; } || { umount_boot; die bootfiles; }
+		umount_boot
+	fi
+	# left in place, the next boots would count on and roll back a working
+	# system: say so instead of reporting it as done
+	pending_clear || die state
 	log "slot $(current_slot) marked good"
 	progress updated "$ver"
 }
@@ -279,6 +460,19 @@ rollback() {
 	ota_lock
 	cur=$(current_slot); other=$(other_slot "$cur")
 	mount_boot || die bootmount
+	if [ -f "$STATE/pending" ] && [ "$(manifest_get mode "$STATE/pending")" = try ]; then
+		# slot.txt still names the old slot: give the update up (also while
+		# its slot is on trial; the next boot is the old slot then)
+		s=$(manifest_get slot "$STATE/pending")
+		# Report "rolledback" only once the next boot is the old slot and
+		# the given-up one cannot boot; otherwise keep the state.
+		if ! { tryboot_disarm && unboot_slot "$s"; }; then
+			umount_boot; die cancelfailed
+		fi
+		umount_boot
+		pending_clear || die state
+		progress rolledback; return 0
+	fi
 	if [ "$(boot_target)" = "$cur" ]; then to=$other; else to=$cur; fi
 	if ! slot_bootable "$to"; then umount_boot; die noslot "$to"; fi
 	write_slot "$to" || { umount_boot; die bootfiles; }
@@ -348,5 +542,6 @@ case ${1:-} in
 	boot-check) boot_check ;;
 	mark-good) mark_good ;;
 	rollback) rollback ;;
-	*) sed -n '2,14s/^# \{0,1\}//p' "$0"; exit 2 ;;
+	reboot) do_reboot ;;
+	*) sed -n '2,15s/^# \{0,1\}//p' "$0"; exit 2 ;;
 esac

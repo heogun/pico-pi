@@ -32,6 +32,7 @@ for (const r of api.matchAll(/\b(?:ok|fail) ([a-z_]+)\b/g)) if (!['ota'].include
 const ota = fs.readFileSync(path.join(www, '../../../sbin/pico8os-ota'), 'utf8');
 for (const r of ota.matchAll(/\bprogress ([a-z]+)\b/g)) used.add('ota_' + r[1]);
 for (const r of ota.matchAll(/\bdie ([a-z]+)\b/g)) used.add('ota_err_' + r[1]);
+for (const r of ota.matchAll(/\bprogress "error ([a-z]+)\b/g)) used.add('ota_err_' + r[1]);
 const missing = [...used].filter(k => !(k in S));
 if (missing.length) { console.log('missing keys: ' + missing.join(', ')); bad++; }
 console.log(`${Object.keys(S).length} keys x ${LANGS.length} languages, ${used.size} used, ${bad ? 'FAILED' : 'ok'}`);
