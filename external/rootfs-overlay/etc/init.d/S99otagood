@@ -1,19 +1,25 @@
 #!/bin/sh
-# A new system slot is "good" once the console has really started: the same
-# PICO-8 process (or, while PICO-8 is not installed, the same installer
-# screen waiting for the zip) has stayed up for STABLE seconds. The session
-# launcher alone is not enough: it also runs while PICO-8 crash-loops, and a
-# crash loop changes the PID every time, so it never counts. If nothing is
-# stable within WINDOW seconds the slot stays on trial (S06ota and the
-# firmware tryboot decide at the next boot).
+# A new system slot is "good" once the console has really started and stayed
+# up for STABLE seconds as the same process:
+#   - a PICO-8 process (pico8_64 / pico8_dyn / pico8), or
+#   - while PICO-8 is not installed, the installer's waiting screen: only
+#     the PID pico8-install itself writes to $RUN/install-waiting when it
+#     shows that screen (not while it checks or installs a package).
+# The session launcher alone is not enough: it also runs while PICO-8
+# crash-loops, and a crash loop changes the PID every time, so it never
+# counts. If nothing is steady within WINDOW seconds the slot stays on
+# trial (S06ota and the firmware tryboot decide at the next boot).
 [ "$1" = start ] || exit 0
 [ -f /state/ota/pending ] || exit 0
+. /usr/lib/pico8os/lib.sh
 STABLE=45 WINDOW=600 STEP=5
 
 # ready_id: "game:PID" / "install:PID" of what is on screen, or nothing.
 ready_id() {
 	p=$(pidof pico8_64 pico8_dyn pico8 2>/dev/null) && { echo "game:${p%% *}"; return; }
-	p=$(pidof pico8-install 2>/dev/null) && echo "install:${p%% *}"
+	w=$(cat "$RUN/install-waiting" 2>/dev/null)
+	case $w in ''|*[!0-9]*) return ;; esac
+	[ "$(cat "/proc/$w/comm" 2>/dev/null)" = pico8-install ] && echo "install:$w"
 }
 
 (
@@ -28,7 +34,6 @@ ready_id() {
 		fi
 		sleep $STEP; t=$((t + STEP))
 	done
-	. /usr/lib/pico8os/lib.sh
 	mkdir -p "$DATA/logs"
 	echo "$(date '+%F %T') PICO-8 never ran steadily for ${STABLE}s; slot stays on trial" >> "$DATA/logs/ota.log"
 ) </dev/null >/dev/null 2>&1 &

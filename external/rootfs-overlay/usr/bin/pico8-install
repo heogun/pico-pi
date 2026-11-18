@@ -10,8 +10,20 @@ LOG="$DATA/logs/pico8.log"
 
 log() { mkdir -p "$DATA/logs"; echo "$(date '+%F %T') install: $*" >> "$LOG"; }
 
+# Ready signal for S99otagood: $RUN/install-waiting holds this PID only
+# while the "PICO-8 is not installed" screen waits for a zip. Checking or
+# installing a package is not "ready" (it may still fail), so it is removed
+# first; it is also gone when this script ends.
+WAITING="$RUN/install-waiting"
+waiting() { mkdir -p "$RUN" && echo $$ > "$WAITING.new" && mv -f "$WAITING.new" "$WAITING"; }
+not_waiting() { rm -f "$WAITING" "$WAITING.new"; }
+trap not_waiting EXIT
+trap 'exit 1' INT TERM
+not_waiting
+
 # install_from SRC -> install_pico8's return code
 install_from() {
+	not_waiting
 	mount -o remount,rw / 2>/dev/null
 	out=$(install_pico8 "$1" "$PICO8_DIR"); rc=$?
 	sync
@@ -82,6 +94,7 @@ MSG
   drive and reboot, or put the zip in the root
   of a USB stick and plug it in now.
 MSG
+	waiting
 	i=0
 	while [ $i -lt 10 ]; do                       # ~30 s per round
 		if scan_usb; then

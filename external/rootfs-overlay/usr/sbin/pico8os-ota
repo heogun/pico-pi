@@ -58,8 +58,10 @@ STATUS="$RUN/ota.status"
 LOG="$DATA/logs/ota.log"
 MAX_TRIES=3
 
-log() { mkdir -p "$DATA/logs"; echo "$(date '+%F %T') $*" >> "$LOG"; }
-progress() { mkdir -p "$RUN"; printf '%s\n' "$*" > "$STATUS"; log "$*"; }
+# Diagnostics only: they never fail, so a full or broken log never changes
+# what an OTA step decides (a function ending in log still returns 0).
+log() { { mkdir -p "$DATA/logs" && echo "$(date '+%F %T') $*" >> "$LOG"; } 2>/dev/null; return 0; }
+progress() { { mkdir -p "$RUN" && printf '%s\n' "$*" > "$STATUS"; } 2>/dev/null; log "$*"; }
 die() { progress "error $*"; echo "pico8os-ota: error $*" >&2; exit 1; }   # cleanup: trap
 
 mount_boot() {
@@ -318,13 +320,19 @@ tryboot_arm() {
 	# never boots a try that was not counted.
 	pending_write "$slot" "$prev" "$ver" $((tries + 1)) try || return 1
 	if ! "$TRYBOOT" set >/dev/null 2>&1; then
-		"$TRYBOOT" clear >/dev/null 2>&1
-		# not started: give the try back (if even that fails, the update
-		# only loses one of its tries)
-		pending_write "$slot" "$prev" "$ver" "$tries" try
+		# "set" failing does not prove the flag is off (it may be set and
+		# only the read-back failed). Give the try back only once "clear"
+		# read the flag back as off; otherwise the next reset may still be
+		# this try, and it stays counted.
+		if "$TRYBOOT" clear >/dev/null 2>&1; then
+			pending_write "$slot" "$prev" "$ver" "$tries" try
+		else
+			log "tryboot flag state unknown; try $((tries + 1)) stays counted"
+		fi
 		return 1
 	fi
 	log "tryboot of slot $slot (try $((tries + 1))/$MAX_TRIES)"
+	return 0
 }
 
 # Early boot (S06ota), no network needed: count the boots of a freshly
