@@ -1,4 +1,4 @@
-# PICO-PI settings. Edit on any PC; changes apply when PICO-8 restarts.
+# PICO8-OS settings. Edit on any PC; changes apply when PICO-8 restarts.
 # Lines are KEY=VALUE. Quote values that contain spaces or '#'.
 
 # Language of the settings screen and the web UI:

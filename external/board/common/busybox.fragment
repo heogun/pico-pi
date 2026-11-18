@@ -1,7 +1,7 @@
 CONFIG_NTPD=y
 # CONFIG_FEATURE_NTPD_SERVER is not set
 # CONFIG_FEATURE_NTPD_CONF is not set
-# Web management UI (picopi-web)
+# Web management UI (pico8os-web)
 CONFIG_HTTPD=y
 CONFIG_FEATURE_HTTPD_CGI=y
 CONFIG_FEATURE_HTTPD_BASIC_AUTH=y

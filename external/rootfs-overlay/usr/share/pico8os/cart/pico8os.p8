@@ -1,10 +1,10 @@
 pico-8 cartridge // http://www.pico-8.com
 version 41
 __lua__
--- pico-pi settings
--- talks to picopi-agent:
---  requests: printh() lines to picopi_req.txt
---  status:   reload() of picopi_status.p8, whose sprite memory holds
+-- pico8-os settings
+-- talks to pico8os-agent:
+--  requests: printh() lines to pico8os_req.txt
+--  status:   reload() of pico8os_status.p8, whose sprite memory holds
 --            "key=value" lines (nul terminated)
 -- texts come from lang_<code>.p8: a custom font (copied to 0x5600) plus
 -- "key=value" lines in that font's encoding. translated text is printed
@@ -23,11 +23,11 @@ kb={"abcdefghijklm","nopqrstuvwxyz","0123456789-_.","!@#$%&*?+=/:~"}
 kbs={"k_shift","k_space","k_del","k_done"}
 
 -- printh appends a newline itself. it writes to pico-8's current folder:
--- carts/picopi/ or the carts root, depending on how the cart was started;
+-- carts/pico8os/ or the carts root, depending on how the cart was started;
 -- the agent watches both.
 function send(c)
  seq=seq+1
- printh(seq.." "..c,"picopi_req.txt")
+ printh(seq.." "..c,"pico8os_req.txt")
 end
 
 -- p8scii: a-z display as capitals, a-z (65-90) as small glyphs
@@ -70,7 +70,7 @@ function parse_kv(a,last)
 end
 
 function read_status()
- reload(0,0,0x2000,"picopi_status.p8")
+ reload(0,0,0x2000,"pico8os_status.p8")
  local n=parse_kv(0,0x1fff)
  if n.ver then st=n end
  load_lang(g("lang"))
@@ -129,7 +129,7 @@ function wifi_segs()
  return {T("w_off")}
 end
 
--- ota status "<code> [args]" (see picopi-ota) -> segments
+-- ota status "<code> [args]" (see pico8os-ota) -> segments
 function ota_segs(o)
  local w=splitc(o," ")
  local c=w[1] or ""

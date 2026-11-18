@@ -1,8 +1,8 @@
-source "$BR2_EXTERNAL_PICOPI_PATH/package/pico8-hotkey/Config.in"
-source "$BR2_EXTERNAL_PICOPI_PATH/package/sdl-gamecontrollerdb/Config.in"
+source "$BR2_EXTERNAL_PICO8OS_PATH/package/pico8-hotkey/Config.in"
+source "$BR2_EXTERNAL_PICO8OS_PATH/package/sdl-gamecontrollerdb/Config.in"
 
-config BR2_PACKAGE_PICOPI_SDL2_HIDAPI
-	bool "SDL2 HIDAPI joystick drivers (PICO-PI override)"
+config BR2_PACKAGE_PICO8OS_SDL2_HIDAPI
+	bool "SDL2 HIDAPI joystick drivers (PICO8-OS override)"
 	depends on BR2_PACKAGE_SDL2
 	depends on BR2_TOOLCHAIN_HAS_THREADS # libusb
 	depends on BR2_TOOLCHAIN_GCC_AT_LEAST_4_9 # libusb

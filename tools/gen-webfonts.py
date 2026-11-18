@@ -5,9 +5,9 @@ The console serves its own fonts so the pages look the same everywhere,
 including the Wi-Fi setup hotspot (no internet, so no web fonts from a CDN).
 To keep downloads small for a Pi Zero, each font is subset:
 
-  picopi-latin.woff2  Noto Sans: Latin, Latin-1, Latin Extended-A/B, Cyrillic,
+  pico8os-latin.woff2  Noto Sans: Latin, Latin-1, Latin Extended-A/B, Cyrillic,
                       punctuation (whole ranges, so Wi-Fi/cart names render)
-  picopi-kr/sc/jp     Noto Sans KR / SC / JP: only the CJK characters used in
+  pico8os-kr/sc/jp     Noto Sans KR / SC / JP: only the CJK characters used in
                       the pages (i18n.js, *.html) + all kana for JP
 
 Characters the subsets lack fall back to the browser's system fonts.
@@ -70,10 +70,10 @@ def main(font_dir, www):
     kana = {u for a, b in KANA for u in range(a, b + 1)}
     wght = {"wght": (400, 700)}
     jobs = [
-        ("NotoSans.ttf", "picopi-latin.woff2", latin, {"wdth": 100, **wght}),
-        ("NotoSansKR.ttf", "picopi-kr.woff2", cjk, wght),
-        ("NotoSansSC.ttf", "picopi-sc.woff2", cjk, wght),
-        ("NotoSansJP.ttf", "picopi-jp.woff2", cjk | kana, wght),
+        ("NotoSans.ttf", "pico8os-latin.woff2", latin, {"wdth": 100, **wght}),
+        ("NotoSansKR.ttf", "pico8os-kr.woff2", cjk, wght),
+        ("NotoSansSC.ttf", "pico8os-sc.woff2", cjk, wght),
+        ("NotoSansJP.ttf", "pico8os-jp.woff2", cjk | kana, wght),
     ]
     for src, dst, uni, axes in jobs:
         size = build(os.path.join(font_dir, src), os.path.join(out, dst), uni, axes)

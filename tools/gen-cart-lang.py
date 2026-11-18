@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the PICO-PI settings-cart language data carts (lang_<code>.p8).
+"""Generate the PICO8-OS settings-cart language data carts (lang_<code>.p8).
 
 PICO-8's built-in font only has ASCII and kana, so each language gets a data
 cart whose sprite memory holds:

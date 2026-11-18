@@ -1,5 +1,5 @@
-# PICO-PI build entry point (Linux host, or inside the Docker builder).
-#   make rpi4          build dist/picopi-rpi4.img
+# PICO8-OS build entry point (Linux host, or inside the Docker builder).
+#   make rpi4          build dist/pico8os-rpi4.img
 #   make qemu          build the QEMU test image
 #   make docker-rpi4   same, inside Docker (macOS / any host)
 
@@ -13,8 +13,8 @@ EXTRA_CONFIG ?=
 KEYS       := $(CURDIR)/keys
 
 # Image/OTA version: sortable as text (newer = greater).
-PICOPI_VERSION ?= $(shell date -u +%Y.%m.%d-%H%M)
-export PICOPI_VERSION
+PICO8OS_VERSION ?= $(shell date -u +%Y.%m.%d-%H%M)
+export PICO8OS_VERSION
 
 BOARDS := rpi0 rpi2 rpi3 rpi4 rpi5 qemu
 
@@ -67,7 +67,7 @@ FONT_VER    := 2026.11.10
 FONT_ZIP    := fusion-pixel-font-8px-monospaced-bdf-v$(FONT_VER).zip
 FONT_SHA256 := f4eb1511153c43019883bd4402457e52ba8ef2062a1445ad9d7cf8ab0e6c5dd3
 FONT_CACHE  := $(CURDIR)/.cache/fusion-pixel-$(FONT_VER)
-CART_DIR    := $(EXT)/rootfs-overlay/usr/share/picopi/cart
+CART_DIR    := $(EXT)/rootfs-overlay/usr/share/pico8os/cart
 
 $(FONT_CACHE)/OFL.txt:
 	mkdir -p $(FONT_CACHE)
@@ -84,7 +84,7 @@ i18n: $(FONT_CACHE)/OFL.txt
 NOTO_COMMIT := 7af0d90b4d532ffa4b041937b560c6df4e7b1e95
 NOTO_CACHE  := $(CURDIR)/.cache/noto-$(NOTO_COMMIT)
 NOTO_BASE   := https://raw.githubusercontent.com/google/fonts/$(NOTO_COMMIT)/ofl
-WWW_DIR     := $(EXT)/rootfs-overlay/usr/share/picopi/www
+WWW_DIR     := $(EXT)/rootfs-overlay/usr/share/pico8os/www
 VENV        := $(CURDIR)/.cache/venv
 
 $(NOTO_CACHE)/OFL.txt:
@@ -121,16 +121,16 @@ $(OUT_ROOT)/$(1)/.config: $(BR_DIR)/Makefile $(addprefix $(EXT)/fragments/,$(add
 	mkdir -p $(OUT_ROOT)/$(1)
 	cat $(if $(base_$(1)),$(BR_DIR)/configs/$(base_$(1))) \
 		$(addprefix $(EXT)/fragments/,$(addsuffix .config,$(frags_$(1)))) $(EXTRA_CONFIG) \
-		> $(OUT_ROOT)/$(1)/picopi_defconfig
+		> $(OUT_ROOT)/$(1)/pico8os_defconfig
 	$(MAKE) -C $(BR_DIR) O=$(OUT_ROOT)/$(1) BR2_EXTERNAL=$(EXT) \
-		BR2_DEFCONFIG=$(OUT_ROOT)/$(1)/picopi_defconfig defconfig
+		BR2_DEFCONFIG=$(OUT_ROOT)/$(1)/pico8os_defconfig defconfig
 
 $(1): $(OUT_ROOT)/$(1)/.config $(KEYS)/ota-public.pem
 	$(MAKE) -C $(BR_DIR) O=$(OUT_ROOT)/$(1)
 	mkdir -p $(DIST_DIR)
-	cp $(OUT_ROOT)/$(1)/images/sdcard.img $(DIST_DIR)/picopi-$(1).img
-	cp $(OUT_ROOT)/$(1)/images/*.picopi-update $(DIST_DIR)/
-	@echo ">>> $(DIST_DIR)/picopi-$(1).img + OTA bundle in $(DIST_DIR)"
+	cp $(OUT_ROOT)/$(1)/images/sdcard.img $(DIST_DIR)/pico8os-$(1).img
+	cp $(OUT_ROOT)/$(1)/images/*.pico8os-update $(DIST_DIR)/
+	@echo ">>> $(DIST_DIR)/pico8os-$(1).img + OTA bundle in $(DIST_DIR)"
 
 menuconfig-$(1): $(OUT_ROOT)/$(1)/.config
 	$(MAKE) -C $(BR_DIR) O=$(OUT_ROOT)/$(1) menuconfig

@@ -24,15 +24,15 @@
   },
   "strings": {
     "title": {
-      "en": "PICO-PI settings",
-      "ko": "PICO-PI 설정",
-      "zh": "PICO-PI 设置",
-      "ja": "PICO-PI 設定",
-      "fr": "Réglages PICO-PI",
-      "es": "Ajustes PICO-PI",
-      "ru": "Настройки PICO-PI",
-      "it": "Impostazioni PICO-PI",
-      "de": "PICO-PI Einstellungen"
+      "en": "PICO8-OS settings",
+      "ko": "PICO8-OS 설정",
+      "zh": "PICO8-OS 设置",
+      "ja": "PICO8-OS 設定",
+      "fr": "Réglages PICO8-OS",
+      "es": "Ajustes PICO8-OS",
+      "ru": "Настройки PICO8-OS",
+      "it": "Impostazioni PICO8-OS",
+      "de": "PICO8-OS Einstellungen"
     },
     "info": {
       "en": "Info",

@@ -1,4 +1,4 @@
-PICO8DATA - your PICO-PI data drive
+PICO8DATA - your PICO8-OS data drive
 ====================================
 pico8os.txt    settings (keyboard layout, start mode, Wi-Fi, ...)
 pico-8_*_raspi.zip   drop the PICO-8 Raspberry Pi zip here (or the unzipped
@@ -15,6 +15,6 @@ PICO-8 frozen? Ctrl+Alt+Backspace (keyboard) or hold SELECT+START for
 Bluetooth controller: put it in pairing mode within 60 s of power-on, or
 press Ctrl+Alt+P on a keyboard. Custom button mappings: pico8/sdl_controllers.txt
 
-This is the only partition you see on a PC. PICO-PI also writes Bluetooth
+This is the only partition you see on a PC. PICO8-OS also writes Bluetooth
 pairings to a small hidden ext4 partition. The system itself is
 read-only, so pulling the power cannot break it.

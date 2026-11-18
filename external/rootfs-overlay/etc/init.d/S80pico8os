@@ -1,0 +1,13 @@
+#!/bin/sh
+# Web management UI and the settings-cart agent.
+case "$1" in
+	start)
+		pico8os-web start >/dev/null 2>&1
+		start-stop-daemon -S -b -m -p /run/pico8os-agent.pid -x /usr/sbin/pico8os-agent
+		;;
+	stop)
+		start-stop-daemon -K -p /run/pico8os-agent.pid 2>/dev/null
+		pico8os-web stop
+		;;
+esac
+exit 0

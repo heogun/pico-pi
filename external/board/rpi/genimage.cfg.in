@@ -1,4 +1,4 @@
-# PICO-PI SD card layout (MBR):
+# PICO8-OS SD card layout (MBR):
 #   p1 PICOBOOT  FAT    firmware + slot a/ and b/ (kernel, DTBs, cmdline)
 #   p2 rootfs-a  ext4   system slot A (read-only at runtime)
 #   p3 rootfs-b  ext4   system slot B (written by OTA updates)

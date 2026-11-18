@@ -5,6 +5,6 @@
 [ -f /state/ota/pending ] || exit 0
 (
 	sleep 45
-	pidof pico8-session >/dev/null 2>&1 && picopi-ota mark-good
+	pidof pico8-session >/dev/null 2>&1 && pico8os-ota mark-good
 ) &
 exit 0

@@ -1,4 +1,4 @@
-# PICO-PI shared shell helpers (busybox ash compatible).
+# PICO8-OS shared shell helpers (busybox ash compatible).
 # Sourced by pico8-session, pico8-install, init scripts, and the host-side
 # post-build script (install_zip only), so keep it POSIX sh.
 
@@ -108,7 +108,7 @@ scan_usb() {
 
 # ---- system helpers (web UI, settings cart, OTA) ----
 
-RUN=/run/picopi
+RUN=/run/pico8os
 
 # Partition prefix of the system disk: /dev/mmcblk0p (Pi) or /dev/vda (QEMU).
 disk_prefix() {
@@ -120,7 +120,7 @@ disk_prefix() {
 # Running system slot (a|b), from the kernel command line.
 current_slot() {
 	for w in $(cat /proc/cmdline); do
-		case $w in picopi.slot=*) echo "${w#picopi.slot=}"; return ;; esac
+		case $w in pico8os.slot=*) echo "${w#pico8os.slot=}"; return ;; esac
 	done
 	echo a
 }
@@ -128,8 +128,8 @@ current_slot() {
 other_slot() { [ "$1" = a ] && echo b || echo a; }
 slot_part() { [ "$1" = a ] && echo "$(disk_prefix)2" || echo "$(disk_prefix)3"; }
 
-os_version() { cat /etc/picopi/version 2>/dev/null || echo unknown; }
-os_board() { cat /etc/picopi/board 2>/dev/null || echo unknown; }
+os_version() { cat /etc/pico8os/version 2>/dev/null || echo unknown; }
+os_board() { cat /etc/pico8os/board 2>/dev/null || echo unknown; }
 
 # set_conf KEY VALUE: change one setting in pico8os.txt in place, keeping
 # comments and order (appends the key if missing). Values are single-line.

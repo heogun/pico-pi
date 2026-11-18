@@ -12,7 +12,7 @@
  *
  *   Ctrl + Alt + P                    (keyboard)
  *
- * and restarts PICO-8 into the PICO-PI settings cart on
+ * and restarts PICO-8 into the PICO8-OS settings cart on
  *
  *   Ctrl + Alt + S                    (keyboard)
  *   SELECT held alone for 2 seconds   (gamepad; BASE3 on generic pads)
@@ -57,7 +57,7 @@
 #define MAX_DEVS 32
 #define PAD_HOLD_MS 3000
 #define SETTINGS_HOLD_MS 2000
-#define NEXT_CART "/run/picopi/next-cart"
+#define NEXT_CART "/run/pico8os/next-cart"
 #define COOLDOWN_MS 4000
 #define RESCAN_MS 2000
 #define LOGFILE "/data/logs/pico8.log"

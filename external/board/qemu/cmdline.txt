@@ -1,1 +1,1 @@
-root=@ROOT@ rootwait ro console=tty3 console=ttyAMA0 quiet loglevel=3 vt.global_cursor_default=0 panic=10 picopi.slot=@SLOT@
+root=@ROOT@ rootwait ro console=tty3 console=ttyAMA0 quiet loglevel=3 vt.global_cursor_default=0 panic=10 pico8os.slot=@SLOT@

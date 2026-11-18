@@ -5,7 +5,7 @@
 ################################################################################
 
 PICO8_HOTKEY_VERSION = 1.0
-PICO8_HOTKEY_SITE = $(BR2_EXTERNAL_PICOPI_PATH)/package/pico8-hotkey/src
+PICO8_HOTKEY_SITE = $(BR2_EXTERNAL_PICO8OS_PATH)/package/pico8-hotkey/src
 PICO8_HOTKEY_SITE_METHOD = local
 PICO8_HOTKEY_LICENSE = MIT
 

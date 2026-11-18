@@ -1,7 +1,7 @@
 # Full image builds. Runs on version tags (v*) and by hand (Actions tab →
 # build → Run workflow). Each board builds in its own job; a tag also
 # publishes a GitHub Release with the SD card images and the OTA files
-# (picopi-<board>-<version>.picopi-update + latest-<board>.txt), so
+# (pico8os-<board>-<version>.pico8os-update + latest-<board>.txt), so
 #   OTA_URL=https://github.com/<owner>/<repo>/releases/latest/download
 # works as the update server (public repositories only: consoles cannot
 # log in to download from a private one).
@@ -63,18 +63,18 @@ jobs:
         board: ${{ fromJSON(needs.setup.outputs.boards) }}
     env:
       BOARD: ${{ matrix.board }}
-      PICOPI_VERSION: ${{ needs.setup.outputs.version }}
-      BR2_DL_DIR: /mnt/picopi/dl
-      OUT_ROOT: /mnt/picopi/output
-      CCACHE_DIR: /mnt/picopi/ccache
+      PICO8OS_VERSION: ${{ needs.setup.outputs.version }}
+      BR2_DL_DIR: /mnt/pico8os/dl
+      OUT_ROOT: /mnt/pico8os/output
+      CCACHE_DIR: /mnt/pico8os/ccache
     steps:
       - uses: actions/checkout@v4
 
       - name: Prepare disk
         # Buildroot needs ~15 GB per board: build on the runner's /mnt disk.
         run: |
-          sudo mkdir -p /mnt/picopi
-          sudo chown "$(id -u):$(id -g)" /mnt/picopi
+          sudo mkdir -p /mnt/pico8os
+          sudo chown "$(id -u):$(id -g)" /mnt/pico8os
           mkdir -p "$BR2_DL_DIR" "$OUT_ROOT" "$CCACHE_DIR"
           df -h / /mnt
 
@@ -94,7 +94,7 @@ jobs:
       - name: Cache downloads
         uses: actions/cache@v4
         with:
-          path: /mnt/picopi/dl
+          path: /mnt/pico8os/dl
           key: dl-${{ matrix.board }}-${{ hashFiles('Makefile', 'external/**/*.config', 'external/**/*.mk', 'external/**/*.hash') }}
           restore-keys: |
             dl-${{ matrix.board }}-
@@ -103,7 +103,7 @@ jobs:
       - name: Cache ccache
         uses: actions/cache@v4
         with:
-          path: /mnt/picopi/ccache
+          path: /mnt/pico8os/ccache
           key: ccache-${{ matrix.board }}-${{ github.run_id }}
           restore-keys: ccache-${{ matrix.board }}-
 
@@ -136,16 +136,16 @@ jobs:
         run: |
           set -eu
           mkdir -p upload
-          xz -T0 -6 -c "dist/picopi-$BOARD.img" > "upload/picopi-$BOARD-$PICOPI_VERSION.img.xz"
-          upd="picopi-$BOARD-$PICOPI_VERSION.picopi-update"
+          xz -T0 -6 -c "dist/pico8os-$BOARD.img" > "upload/pico8os-$BOARD-$PICO8OS_VERSION.img.xz"
+          upd="pico8os-$BOARD-$PICO8OS_VERSION.pico8os-update"
           cp "dist/$upd" upload/
-          printf 'version=%s\nurl=%s\n' "$PICOPI_VERSION" "$upd" > "upload/latest-$BOARD.txt"
+          printf 'version=%s\nurl=%s\n' "$PICO8OS_VERSION" "$upd" > "upload/latest-$BOARD.txt"
           (cd upload && sha256sum * > "SHA256SUMS-$BOARD")
           ls -la upload
 
       - uses: actions/upload-artifact@v4
         with:
-          name: picopi-${{ matrix.board }}-${{ needs.setup.outputs.version }}
+          name: pico8os-${{ matrix.board }}-${{ needs.setup.outputs.version }}
           path: upload/*
           compression-level: 0
           retention-days: 14
@@ -171,5 +171,5 @@ jobs:
           set -eu
           cat release/SHA256SUMS-* > release/SHA256SUMS && rm release/SHA256SUMS-*
           gh release create "$TAG" release/* --repo "$GITHUB_REPOSITORY" \
-            --title "PICO-PI $TAG ($VERSION)" \
-            --notes "SD card images (picopi-<board>-$VERSION.img.xz) and OTA updates (.picopi-update) for each board. PICO-8 itself is not included."
+            --title "PICO8-OS $TAG ($VERSION)" \
+            --notes "SD card images (pico8os-<board>-$VERSION.img.xz) and OTA updates (.pico8os-update) for each board. PICO-8 itself is not included."

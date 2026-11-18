@@ -1,0 +1,15 @@
+/* Bundled fonts (Noto Sans, SIL OFL 1.1, see /fonts/OFL.txt), subset by
+   tools/gen-webfonts.py. Browsers only download a face when the page needs
+   one of its characters, so an English page loads just the Latin file.
+   The CJK order follows the page language so shared Han characters use the
+   right regional shapes. Absolute URLs: the Wi-Fi setup page is served for
+   any path (captive portal). */
+@font-face { font-family: "Pico8OS Sans"; src: url("/fonts/pico8os-latin.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "Pico8OS KR"; src: url("/fonts/pico8os-kr.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "Pico8OS SC"; src: url("/fonts/pico8os-sc.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "Pico8OS JP"; src: url("/fonts/pico8os-jp.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+
+html { --pico8os-font: "Pico8OS Sans", "Pico8OS KR", "Pico8OS SC", "Pico8OS JP", system-ui, sans-serif; }
+html[lang="zh"] { --pico8os-font: "Pico8OS Sans", "Pico8OS SC", "Pico8OS JP", "Pico8OS KR", system-ui, sans-serif; }
+html[lang="ja"] { --pico8os-font: "Pico8OS Sans", "Pico8OS JP", "Pico8OS SC", "Pico8OS KR", system-ui, sans-serif; }
+body, button, input, select, textarea { font-family: var(--pico8os-font); }

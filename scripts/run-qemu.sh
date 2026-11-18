@@ -1,8 +1,8 @@
 #!/bin/sh
-# Boot the PICO-PI QEMU image (qemu-system-arm, "virt" machine).
+# Boot the PICO8-OS QEMU image (qemu-system-arm, "virt" machine).
 #   scripts/run-qemu.sh [--zip pico-8_x.y.z_raspi.zip] [--fresh]
 # --zip   copy the PICO-8 Raspberry Pi zip onto the PICO8DATA partition
-# --fresh start again from dist/picopi-qemu.img
+# --fresh start again from dist/pico8os-qemu.img
 #
 # Like the Pi firmware, this reads slot.txt from the boot partition and boots
 # that slot's kernel and cmdline.txt, so OTA updates and rollbacks work in
@@ -11,8 +11,8 @@
 # terminal (login: root); quit with Ctrl-A X.
 set -eu
 cd "$(dirname "$0")/.."
-BASE=dist/picopi-qemu.img
-DISK=dist/picopi-qemu-run.img
+BASE=dist/pico8os-qemu.img
+DISK=dist/pico8os-qemu-run.img
 WORK=dist/.qemu
 zip=''
 while [ $# -gt 0 ]; do
@@ -84,7 +84,7 @@ while :; do
 		-audiodev "$AUDIO",id=snd0 -device virtio-sound-device,audiodev=snd0 \
 		$DISPLAY_OPT -serial mon:stdio || exit $?
 
-	printf '\nPICO-PI stopped (reboot or power off). Boot again? [Y/n] (5 s) '
+	printf '\nPICO8-OS stopped (reboot or power off). Boot again? [Y/n] (5 s) '
 	if read -r -t 5 ans && [ "$ans" = n ]; then exit 0; fi
 	echo
 done

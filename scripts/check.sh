@@ -18,7 +18,7 @@ bad() { printf 'FAIL: %s\n' "$*"; fail=1; }
 note "== shell scripts"
 scripts=$(find external/rootfs-overlay/etc/init.d external/rootfs-overlay/usr/bin \
 	external/rootfs-overlay/usr/sbin external/rootfs-overlay/usr/lib \
-	external/rootfs-overlay/usr/share/picopi/www/cgi-bin external/board scripts \
+	external/rootfs-overlay/usr/share/pico8os/www/cgi-bin external/board scripts \
 	-type f \( -name '*.sh' -o -perm -u+x \) ! -name '*.c' | sort)
 # Interpreter per file: its shebang, or "# shellcheck shell=bash" for
 # sourced bash fragments; everything else must be POSIX sh (busybox ash on
@@ -41,7 +41,7 @@ done
 
 note "== executable bits (the overlay keeps file modes)"
 for f in external/rootfs-overlay/etc/init.d/* external/rootfs-overlay/usr/bin/* \
-	external/rootfs-overlay/usr/sbin/* external/rootfs-overlay/usr/share/picopi/www/cgi-bin/*; do
+	external/rootfs-overlay/usr/sbin/* external/rootfs-overlay/usr/share/pico8os/www/cgi-bin/*; do
 	[ -x "$f" ] || bad "not executable: $f"
 done
 
@@ -65,7 +65,7 @@ done
 note "== settings cart Lua"
 if command -v luajit >/dev/null; then
 	tmp=$(mktemp)
-	sed -n '/^__lua__$/,$p' external/rootfs-overlay/usr/share/picopi/cart/picopi.p8 | sed '1d' > "$tmp.lua"
+	sed -n '/^__lua__$/,$p' external/rootfs-overlay/usr/share/pico8os/cart/pico8os.p8 | sed '1d' > "$tmp.lua"
 	luajit -b "$tmp.lua" "$tmp.out" || bad "cart Lua syntax"
 	rm -f "$tmp" "$tmp.lua" "$tmp.out"
 else

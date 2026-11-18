@@ -1,5 +1,5 @@
-# Cyrillic glyphs for the PICO-PI settings cart, drawn to match Fusion Pixel
-# Font 8px Latin (Fusion has no Cyrillic). Part of PICO-PI, same license.
+# Cyrillic glyphs for the PICO8-OS settings cart, drawn to match Fusion Pixel
+# Font 8px Latin (Fusion has no Cyrillic). Part of PICO8-OS, same license.
 #
 # Block = one header line + 8 rows (row 0 top .. row 7 descender).
 # "X=Y" reuses the Latin glyph Y. Width = widest row; advance = width + 1.

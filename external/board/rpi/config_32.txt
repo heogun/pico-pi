@@ -1,4 +1,4 @@
-# PICO-PI firmware config. See https://www.raspberrypi.com/documentation/computers/config_txt.html
+# PICO8-OS firmware config. See https://www.raspberrypi.com/documentation/computers/config_txt.html
 
 # A/B system slots: slot.txt holds "os_prefix=a/" or "os_prefix=b/", which
 # selects the kernel, cmdline.txt, DTBs and overlays of that slot. OTA updates

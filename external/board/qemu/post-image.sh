@@ -1,9 +1,9 @@
 #!/bin/bash
-# PICO-PI post-image for QEMU virt: same layout and OTA bundle as the Pi
+# PICO8-OS post-image for QEMU virt: same layout and OTA bundle as the Pi
 # images; the kernel and cmdline of the active slot are read by run-qemu.sh.
 set -euo pipefail
 BOARD_DIR=$(cd "$(dirname "$0")" && pwd)
-PICOPI_BOARD=${2:-qemu}
+PICO8OS_BOARD=${2:-qemu}
 . "$BOARD_DIR/../common/stage-data-files.sh"
 
 KERNEL=zImage

@@ -108,9 +108,9 @@ setup_audio
 export HOME="$DATA"
 
 set -- -home "$DATA/pico8" -root_path "$DATA/carts" -desktop "$DATA/screenshots"
-# One-shot: open the PICO-PI settings cart (hotkey, web UI) instead.
+# One-shot: open the PICO8-OS settings cart (hotkey, web UI) instead.
 next=$(cat "$RUN/next-cart" 2>/dev/null); rm -f "$RUN/next-cart"
-SETTINGS_CART="$DATA/carts/picopi/picopi.p8"
+SETTINGS_CART="$DATA/carts/pico8os/pico8os.p8"
 if [ "$next" = settings ] && [ -f "$SETTINGS_CART" ]; then
 	PICO8_MODE=settings
 	set -- "$@" -run "$SETTINGS_CART"

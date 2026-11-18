@@ -1,20 +1,20 @@
 #!/bin/sh
-# PICO-PI agent: the bridge between the settings cart and the system.
+# PICO8-OS agent: the bridge between the settings cart and the system.
 #
-# The cart (carts/picopi/picopi.p8) appends requests with
-#   printh("<seq> <command>", "picopi_req.txt")
-# and reads the answer from picopi_status.p8, a cart whose sprite sheet
-# holds "key=value" text, via reload(). Both live in /run/picopi/cart
-# (tmpfs, bind-mounted on carts/picopi) so polling never writes the SD card.
+# The cart (carts/pico8os/pico8os.p8) appends requests with
+#   printh("<seq> <command>", "pico8os_req.txt")
+# and reads the answer from pico8os_status.p8, a cart whose sprite sheet
+# holds "key=value" text, via reload(). Both live in /run/pico8os/cart
+# (tmpfs, bind-mounted on carts/pico8os) so polling never writes the SD card.
 #
 # Commands: refresh | set KEY VALUE | pair | wifi_scan | wifi IDX [PSK]
 #           ota_check | ota_install | restart | exit | reboot | poweroff
 # Status "msg" is "<key> <arg>": the cart translates m_<key> from its
 # language cart (lang_<code>.p8); key "ota" carries an OTA status line
-# ("<code> [args]", see picopi-ota) that the cart translates as o_<code>.
+# ("<code> [args]", see pico8os-ota) that the cart translates as o_<code>.
 . /usr/lib/pico8os/lib.sh
 CART_DIR="$RUN/cart"
-MNT="$DATA/carts/picopi"
+MNT="$DATA/carts/pico8os"
 MSG=""
 SEQ=0
 
@@ -58,7 +58,7 @@ write_status() {
 	{
 		printf 'pico-8 cartridge // http://www.pico-8.com\nversion 41\n__gfx__\n'
 		gfx_encode < "$CART_DIR/.status.txt"
-	} > "$CART_DIR/.picopi_status.p8" && mv "$CART_DIR/.picopi_status.p8" "$CART_DIR/picopi_status.p8"
+	} > "$CART_DIR/.pico8os_status.p8" && mv "$CART_DIR/.pico8os_status.p8" "$CART_DIR/pico8os_status.p8"
 }
 
 handle() {
@@ -73,21 +73,21 @@ handle() {
 				MSG="saved"
 				# PICO-8 settings take effect when the settings cart exits
 				# (PICO-8 restarts then); system ones apply now.
-				case $k in WIFI_*|BLUETOOTH|HOTKEY|WEB_PASSWORD) picopi-apply "$k" ;; esac
+				case $k in WIFI_*|BLUETOOTH|HOTKEY|WEB_PASSWORD) pico8os-apply "$k" ;; esac
 			else MSG="error $k"; fi ;;
 		pair) ( pico8-btpair 90 >/dev/null 2>&1 & ); MSG="pairing" ;;
-		wifi_scan) picopi-wifi scan >/dev/null 2>&1; MSG="scandone" ;;
+		wifi_scan) pico8os-wifi scan >/dev/null 2>&1; MSG="scandone" ;;
 		wifi)
 			idx=$1; shift
 			ssid=$(sed -n "${idx}p" "$RUN/wifi-scan.txt" 2>/dev/null)
 			if [ -z "$ssid" ]; then MSG="notfound"
 			else
 				set_conf WIFI_SSID "$ssid"; set_conf WIFI_PSK "$*"
-				( picopi-wifi restart >/dev/null 2>&1 & ); MSG="connecting $ssid"
+				( pico8os-wifi restart >/dev/null 2>&1 & ); MSG="connecting $ssid"
 			fi ;;
-		ota_check) picopi-ota check >/dev/null 2>&1; MSG="ota $(cat "$RUN/ota.status" 2>/dev/null)" ;;
+		ota_check) pico8os-ota check >/dev/null 2>&1; MSG="ota $(cat "$RUN/ota.status" 2>/dev/null)" ;;
 		ota_install)
-			( f=$(picopi-ota download 2>/dev/null) && [ -n "$f" ] && picopi-ota apply "$f" && rm -f "$f" ) >/dev/null 2>&1 &
+			( f=$(pico8os-ota download 2>/dev/null) && [ -n "$f" ] && pico8os-ota apply "$f" && rm -f "$f" ) >/dev/null 2>&1 &
 			MSG="downloading" ;;
 		restart|exit) restart_pico8 ;;
 		reboot) reboot ;;
@@ -98,7 +98,7 @@ handle() {
 
 setup() {
 	mkdir -p "$CART_DIR" "$MNT"
-	cp /usr/share/picopi/cart/*.p8 "$CART_DIR/"
+	cp /usr/share/pico8os/cart/*.p8 "$CART_DIR/"
 	mountpoint -q "$MNT" || mount --bind "$CART_DIR" "$MNT"
 	write_status
 }
@@ -106,7 +106,7 @@ setup() {
 setup
 n=0 active=0
 while :; do
-	for req in "$CART_DIR/picopi_req.txt" "$DATA/carts/picopi_req.txt"; do
+	for req in "$CART_DIR/pico8os_req.txt" "$DATA/carts/pico8os_req.txt"; do
 		[ -s "$req" ] || continue
 		mv "$req" "$req.work" 2>/dev/null || continue
 		while IFS= read -r line || [ -n "$line" ]; do

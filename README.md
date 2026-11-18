@@ -1,4 +1,4 @@
-# PICO-PI
+# PICO8-OS
 
 라즈베리파이를 켜면 바로 PICO-8(Splore)이 뜨는 전용 OS. Buildroot 2026.02.3 LTS 기반의 `BR2_EXTERNAL` 트리입니다.
 
@@ -41,12 +41,12 @@ Linux 호스트라면 바로 빌드할 수 있습니다(Buildroot 소스는 처�
 make rpi4
 ```
 
-결과물은 `dist/picopi-<board>.img`(SD카드 이미지)와 `dist/picopi-<board>-<버전>.picopi-update`(OTA 업데이트 파일)입니다.
+결과물은 `dist/pico8os-<board>.img`(SD카드 이미지)와 `dist/pico8os-<board>-<버전>.pico8os-update`(OTA 업데이트 파일)입니다.
 이미지는 Raspberry Pi Imager나 `dd`로 SD카드에 씁니다.
 
 처음 빌드하면 `keys/ota-private.pem`(업데이트 서명 키)이 만들어집니다. **이 파일을 안전하게 보관하세요.**
 이 키로 서명한 업데이트만 콘솔에 설치되고(이미지에는 공개 키만 들어감), 키를 잃어버리면 이미 만든 콘솔은 SD카드를 다시 굽는 방법으로만 업데이트할 수 있습니다.
-버전은 빌드 시각(`YYYY.MM.DD-HHMM`, UTC)이며 `make PICOPI_VERSION=... rpi4`로 바꿀 수 있습니다.
+버전은 빌드 시각(`YYYY.MM.DD-HHMM`, UTC)이며 `make PICO8OS_VERSION=... rpi4`로 바꿀 수 있습니다.
 처음 빌드할 때는 툴체인, 커널, Mesa를 받아서 빌드하므로 수십 분에서 1시간 넘게 걸립니다.
 
 - 설정 변경: `make menuconfig-rpi4`
@@ -59,7 +59,7 @@ make rpi4
 | `check` | `main` 푸시, PR | `scripts/check.sh` (몇 분) |
 | `build` | `v*` 태그 푸시, 또는 Actions 탭에서 수동 실행(보드 선택 가능) | 보드마다 별도 작업으로 전체 이미지 빌드 → 아티팩트(14일 보관). 태그일 때는 GitHub Release도 만듦 |
 
-- 결과물(보드마다): `picopi-<보드>-<버전>.img.xz`(SD카드 이미지), `picopi-<보드>-<버전>.picopi-update`(OTA), `latest-<보드>.txt`, SHA256SUMS
+- 결과물(보드마다): `pico8os-<보드>-<버전>.img.xz`(SD카드 이미지), `pico8os-<보드>-<버전>.pico8os-update`(OTA), `latest-<보드>.txt`, SHA256SUMS
 - 다운로드, Buildroot 소스, ccache는 Actions 캐시로 재사용합니다(`EXTRA_CONFIG`로 CI에서만 ccache를 켬). 빌드는 러너의 큰 `/mnt` 디스크에서 합니다.
 - **OTA 서명 키:** 저장소 시크릿 `OTA_PRIVATE_KEY`에 `keys/ota-private.pem` 내용을 넣으세요.
   ```bash
@@ -145,19 +145,19 @@ PICO8DATA/
 - 이 페이지에서 고친 설정은 바로 적용됩니다. Wi-Fi 설정은 Wi-Fi를 다시 연결하고, PICO-8 관련 설정은 PICO-8을 다시 시작합니다.
 
 ### 처음 Wi-Fi 설정 (설정용 AP)
-Wi-Fi 설정이 없거나 40초 안에 연결하지 못하고 유선 연결도 없으면, 콘솔이 **`PICO-PI-xxxx`** 라는 공개 Wi-Fi를 엽니다.
+Wi-Fi 설정이 없거나 40초 안에 연결하지 못하고 유선 연결도 없으면, 콘솔이 **`PICO8-OS-xxxx`** 라는 공개 Wi-Fi를 엽니다.
 폰으로 접속하면 어떤 주소로 가든 Wi-Fi 설정 페이지가 뜹니다(캡티브 포털). 네트워크를 고르고 비밀번호를 넣으면 콘솔이 그 네트워크에 연결하고 AP를 끕니다.
 - AP 모드에서는 웹 API가 Wi-Fi 설정 기능만 허용합니다(인증 없음).
 - 설정된 네트워크가 잠시 꺼져 있어 AP 모드로 들어갔다면, AP에 접속한 기기가 없을 때 5분마다 원래 네트워크로 다시 연결을 시도합니다.
 - 내장 Wi-Fi가 없는 Pi 1/2는 유선 연결을 쓰면 됩니다.
 
 ### 설정 카트
-`Ctrl + Alt + S` 또는 패드의 `SELECT`만 2초 누르면 PICO-8이 PICO-PI 설정 카트로 다시 시작합니다(웹 상태 탭의 "콘솔에서 설정 열기"도 같음).
+`Ctrl + Alt + S` 또는 패드의 `SELECT`만 2초 누르면 PICO-8이 PICO8-OS 설정 카트로 다시 시작합니다(웹 상태 탭의 "콘솔에서 설정 열기"도 같음).
 - 항목: info(버전, 슬롯, IP, 웹 주소와 비밀번호, Wi-Fi, 업데이트) / Wi-Fi 선택 + 화면 키보드로 비밀번호 입력 / 패드 페어링 / 키보드 레이아웃 / 시작 화면 / 종료 동작 / 업데이트 확인·설치 / PICO-8 재시작 / 재부팅 / 전원 끄기
 - 조작: ↑↓ 이동, ←→ 값 바꾸기, 🅾️ 선택, ❎ 뒤로/나가기. 나가면 PICO-8이 원래 모드로 다시 시작하며 바뀐 설정이 적용됩니다.
-- 카트와 OS 사이 통신: 카트가 `printh("<번호> <명령>", "picopi_req.txt")`로 요청을 쓰면, `picopi-agent`가 처리합니다. 결과는 `picopi_status.p8`(스프라이트 메모리에 `key=value` 텍스트를 넣은 카트)에 쓰고, 카트가 `reload()`로 읽습니다.
-  두 파일은 tmpfs(`/run/picopi/cart`)를 `carts/picopi/`에 바인드 마운트한 곳에 있어서 SD카드에 쓰지 않습니다.
-  macOS용 PICO-8에서 헤드리스(`-x`)로 이 방식을 확인했습니다. `printh` 파일은 실행 방법에 따라 `carts/picopi/`나 `carts/`에 생기므로 에이전트는 두 곳을 모두 봅니다.
+- 카트와 OS 사이 통신: 카트가 `printh("<번호> <명령>", "pico8os_req.txt")`로 요청을 쓰면, `pico8os-agent`가 처리합니다. 결과는 `pico8os_status.p8`(스프라이트 메모리에 `key=value` 텍스트를 넣은 카트)에 쓰고, 카트가 `reload()`로 읽습니다.
+  두 파일은 tmpfs(`/run/pico8os/cart`)를 `carts/pico8os/`에 바인드 마운트한 곳에 있어서 SD카드에 쓰지 않습니다.
+  macOS용 PICO-8에서 헤드리스(`-x`)로 이 방식을 확인했습니다. `printh` 파일은 실행 방법에 따라 `carts/pico8os/`나 `carts/`에 생기므로 에이전트는 두 곳을 모두 봅니다.
 
 ## 언어
 
@@ -176,8 +176,8 @@ Wi-Fi 설정이 없거나 40초 안에 연결하지 못하고 유선 연결도 �
 
 ### 웹 글꼴
 웹 페이지는 시스템 글꼴 대신 이미지에 넣은 **Noto Sans**(SIL OFL 1.1)로 그립니다. 설정용 AP처럼 인터넷이 없는 곳에서도 같은 모양으로 보입니다.
-- `www/fonts/picopi-latin.woff2`(66 KB)는 라틴, 키릴 등 영역 전체를 담습니다.
-- `picopi-kr`(144 KB), `picopi-sc`(140 KB), `picopi-jp`(238 KB)는 페이지에 쓰인 한중일 글자만 담고, JP에는 가나 전체도 넣었습니다. 두께는 400–700입니다.
+- `www/fonts/pico8os-latin.woff2`(66 KB)는 라틴, 키릴 등 영역 전체를 담습니다.
+- `pico8os-kr`(144 KB), `pico8os-sc`(140 KB), `pico8os-jp`(238 KB)는 페이지에 쓰인 한중일 글자만 담고, JP에는 가나 전체도 넣었습니다. 두께는 400–700입니다.
 - 브라우저는 필요한 글꼴만 받습니다(영어 페이지는 라틴 66 KB만). 중국어·일본어 페이지는 한자 모양이 맞도록 해당 글꼴을 먼저 씁니다.
 - 부분 글꼴에 없는 글자(예: 한글 Wi-Fi 이름)는 브라우저의 시스템 글꼴로 표시됩니다.
 - 문구를 바꾼 뒤 `make webfonts`를 실행하면 다시 만듭니다. google/fonts 커밋과 sha256을 고정해 받고, fontTools는 `.cache/venv`에 설치합니다. 라이선스는 `www/fonts/OFL.txt`에 있습니다.
@@ -188,24 +188,24 @@ Wi-Fi 설정이 없거나 40초 안에 연결하지 못하고 유선 연결도 �
 PICOBOOT/
   config.txt   ... include slot.txt
   slot.txt     os_prefix=a/        ← 이 한 줄로 슬롯을 고름 (Pi 펌웨어 기능, 모든 모델)
-  a/  zImage(또는 Image), *.dtb, overlays/(+README), cmdline.txt (root=…p2 picopi.slot=a)
-  b/  같은 구성, root=…p3 picopi.slot=b
+  a/  zImage(또는 Image), *.dtb, overlays/(+README), cmdline.txt (root=…p2 pico8os.slot=a)
+  b/  같은 구성, root=…p3 pico8os.slot=b
 ```
 
-1. **업데이트 파일:** 빌드할 때 `picopi-<보드>-<버전>.picopi-update`가 함께 나옵니다. tar 하나에 `manifest`, `manifest.sig`, `cmdline.txt.in`, `boot.tar.gz`, `rootfs.ext4.gz`가 들어 있습니다.
+1. **업데이트 파일:** 빌드할 때 `pico8os-<보드>-<버전>.pico8os-update`가 함께 나옵니다. tar 하나에 `manifest`, `manifest.sig`, `cmdline.txt.in`, `boot.tar.gz`, `rootfs.ext4.gz`가 들어 있습니다.
    `manifest`에는 보드, 버전, 각 파일의 sha256이 있고, 이 `manifest`만 ECDSA P-256으로 서명합니다.
-2. **설치(`picopi-ota apply`):** 서명 → 보드 → 파일 해시 → 슬롯 크기를 확인합니다. 그다음 쓰지 않는 슬롯에 rootfs를 기록하고, 커널 파일을 `b.new/`에 풀어 `b/`로 바꿉니다. 마지막으로 `slot.txt`를 새 이름으로 쓴 뒤 바꿔치기합니다.
+2. **설치(`pico8os-ota apply`):** 서명 → 보드 → 파일 해시 → 슬롯 크기를 확인합니다. 그다음 쓰지 않는 슬롯에 rootfs를 기록하고, 커널 파일을 `b.new/`에 풀어 `b/`로 바꿉니다. 마지막으로 `slot.txt`를 새 이름으로 쓴 뒤 바꿔치기합니다.
 3. **확인과 되돌리기:** 새 슬롯으로 부팅할 때마다 `S06ota`가 시도 횟수를 셉니다. PICO-8 세션이 45초 이상 돌면 `S99otagood`이 확정합니다. 3번 안에 확정되지 않으면 이전 슬롯으로 `slot.txt`를 되돌리고 재부팅합니다.
 4. **설치 경로:**
    - 웹 업데이트 탭에 파일 올리기
-   - `PICO8DATA/`나 `PICO8DATA/ota/`에 `.picopi-update` 넣고 재부팅(설치 후 `.installed`로 이름이 바뀜)
+   - `PICO8DATA/`나 `PICO8DATA/ota/`에 `.pico8os-update` 넣고 재부팅(설치 후 `.installed`로 이름이 바뀜)
    - 온라인: `OTA_URL`을 설정하면 `<OTA_URL>/latest-<보드>.txt`(`version=…`, `url=…`)를 확인해 받아 설치(웹 또는 설정 카트)
-5. **업데이트 서버:** 정적 파일 서버면 충분합니다. 예: `latest-rpi4.txt`와 `picopi-rpi4-2026.12.01-0900.picopi-update`를 한 폴더에 둡니다.
+5. **업데이트 서버:** 정적 파일 서버면 충분합니다. 예: `latest-rpi4.txt`와 `pico8os-rpi4-2026.12.01-0900.pico8os-update`를 한 폴더에 둡니다.
    **GitHub Release를 그대로 서버로 쓸 수 있습니다:** `OTA_URL=https://github.com/<계정>/<저장소>/releases/latest/download`.
    단, 공개 저장소일 때만 됩니다. 비공개 저장소의 릴리스 파일은 로그인해야 받을 수 있어서 콘솔이 받지 못합니다.
    ```
    version=2026.12.01-0900
-   url=picopi-rpi4-2026.12.01-0900.picopi-update
+   url=pico8os-rpi4-2026.12.01-0900.pico8os-update
    ```
 - 펌웨어 파일(`start*.elf`, `bootcode.bin`)은 업데이트하지 않습니다. 커널, DTB, 오버레이, rootfs만 바뀝니다.
 - QEMU에서도 같은 방식으로 동작합니다. `run-qemu.sh`가 `slot.txt`를 읽어 해당 슬롯의 커널과 cmdline으로 부팅합니다.
@@ -278,7 +278,7 @@ QEMU로 확인할 수 없는 것: 라즈베리파이 펌웨어 부팅(`config.tx
 
 ```
 Makefile                      보드별: upstream raspberrypiN_defconfig + fragments → defconfig → 빌드
-external/                     BR2_EXTERNAL (name: PICOPI)
+external/                     BR2_EXTERNAL (name: PICO8OS)
   fragments/                  common / rpi-common / 보드별 Kconfig 조각
   board/rpi/                  config.txt, cmdline.txt, genimage, post-image
   board/qemu/                 커널 virtio 조각, genimage, post-image
@@ -299,15 +299,15 @@ external/                     BR2_EXTERNAL (name: PICOPI)
     etc/bluetooth/            BlueZ 설정 (AutoEnable, 재연결, ClassicBondedOnly=false)
     etc/wgetrc                Splore 다운로드 타임아웃
     etc/init.d/S06ota         새 슬롯 부팅 횟수 확인/되돌리기, 넣어 둔 업데이트 파일 설치
-    etc/init.d/S80picopi      웹 서버 + 설정 카트 에이전트
+    etc/init.d/S80pico8os      웹 서버 + 설정 카트 에이전트
     etc/init.d/S99otagood     정상 동작 확인 후 새 슬롯 확정
-    usr/sbin/picopi-ota       OTA (verify/apply/check/download/boot-check/mark-good/rollback)
-    usr/sbin/picopi-web       웹 서버 시작 (인증 / AP 모드)
-    usr/sbin/picopi-wifi      Wi-Fi 클라이언트 / 설정용 AP / 검색
-    usr/sbin/picopi-agent     설정 카트 요청 처리, 상태 카트 생성
-    usr/sbin/picopi-apply     바뀐 설정 즉시 적용
-    usr/share/picopi/www/     웹 페이지(index.html, setup.html, i18n.js, fonts.css, fonts/), cgi-bin/api
-    usr/share/picopi/cart/    설정 카트 picopi.p8, 언어 카트 lang_*.p8, 글꼴 라이선스
+    usr/sbin/pico8os-ota       OTA (verify/apply/check/download/boot-check/mark-good/rollback)
+    usr/sbin/pico8os-web       웹 서버 시작 (인증 / AP 모드)
+    usr/sbin/pico8os-wifi      Wi-Fi 클라이언트 / 설정용 AP / 검색
+    usr/sbin/pico8os-agent     설정 카트 요청 처리, 상태 카트 생성
+    usr/sbin/pico8os-apply     바뀐 설정 즉시 적용
+    usr/share/pico8os/www/     웹 페이지(index.html, setup.html, i18n.js, fonts.css, fonts/), cgi-bin/api
+    usr/share/pico8os/cart/    설정 카트 pico8os.p8, 언어 카트 lang_*.p8, 글꼴 라이선스
   package/pico8-hotkey/       단축키 데몬 (C, evdev, 키보드/게임패드 핫플러그 지원)
   package/sdl-gamecontrollerdb/  SDL_GameControllerDB (커밋 고정, sha256 검증)
   boot-files/                 PICO8DATA에 처음 들어가는 pico8os.txt, README.txt

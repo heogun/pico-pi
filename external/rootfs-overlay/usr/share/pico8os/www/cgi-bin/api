@@ -1,5 +1,5 @@
 #!/bin/sh
-# PICO-PI web API (busybox httpd CGI). /cgi-bin/api?a=ACTION&...
+# PICO8-OS web API (busybox httpd CGI). /cgi-bin/api?a=ACTION&...
 # Uploads are raw request bodies (fetch(url, {method:'POST', body:file})),
 # so no multipart parsing is needed.
 # Replies carry a message code + argument ({"ok":..,"code":..,"arg":..});
@@ -88,7 +88,7 @@ status)
 		"$(json_str "$(pico8_version)")" "$(json_str "$(uptime | sed 's/^.*up *//; s/, *load.*//')")" \
 		"$(json_str "$(df -h "$DATA" 2>/dev/null | awk 'NR==2{print $4}')")"
 	printf '"ota":{'
-	picopi-ota status 2>/dev/null | awk -F= 'NR>1{printf ","} {v=$0; sub(/^[^=]*=/,"",v); gsub(/\\/,"\\\\",v); gsub(/"/,"\\\"",v); printf "\"%s\":\"%s\"", $1, v}'
+	pico8os-ota status 2>/dev/null | awk -F= 'NR>1{printf ","} {v=$0; sub(/^[^=]*=/,"",v); gsub(/\\/,"\\\\",v); gsub(/"/,"\\\"",v); printf "\"%s\":\"%s\"", $1, v}'
 	printf '}}\n'
 	;;
 conf_get)
@@ -97,12 +97,12 @@ conf_put)
 	need_post
 	[ "${CONTENT_LENGTH:-0}" -le "$MAX_TEXT" ] || fail too_large
 	body > "$DATA/pico8os.txt.new" && mv "$DATA/pico8os.txt.new" "$DATA/pico8os.txt" && sync
-	picopi-apply >/dev/null 2>&1
+	pico8os-apply >/dev/null 2>&1
 	ok saved ;;
 set)
 	k=$(param k) || fail unknown_setting; v=$(param v)
 	set_conf "$k" "$v" || fail unknown_setting "$k"
-	picopi-apply "$k" >/dev/null 2>&1
+	pico8os-apply "$k" >/dev/null 2>&1
 	ok saved_key "$k" ;;
 carts)
 	hdr
@@ -160,7 +160,7 @@ bt_remove)
 	ok removed "$mac" ;;
 wifi_scan)
 	hdr
-	picopi-wifi scan 2>/dev/null | json_list; echo ;;
+	pico8os-wifi scan 2>/dev/null | json_list; echo ;;
 wifi_set)
 	need_post
 	[ "${CONTENT_LENGTH:-0}" -le 4096 ] || fail too_large
@@ -171,32 +171,32 @@ wifi_set)
 	[ -n "$psk" ] && { [ ${#psk} -ge 8 ] && [ ${#psk} -le 63 ] || fail psk_len; }
 	set_conf WIFI_SSID "$ssid" && set_conf WIFI_PSK "$psk" || fail quotes
 	[ -n "$country" ] && set_conf WIFI_COUNTRY "$(printf '%s' "$country" | tr -cd 'A-Za-z' | tr 'a-z' 'A-Z' | head -c 2)"
-	( sleep 2; picopi-wifi restart >/dev/null 2>&1 ) &
+	( sleep 2; pico8os-wifi restart >/dev/null 2>&1 ) &
 	ok connecting "$ssid" ;;
 ota_put)
 	need_post
 	mkdir -p "$DATA/ota"
-	body > "$DATA/ota/upload.picopi-update.part" || fail upload_failed
-	mv "$DATA/ota/upload.picopi-update.part" "$DATA/ota/upload.picopi-update"; sync
-	if picopi-ota verify "$DATA/ota/upload.picopi-update" >/dev/null 2>&1; then
+	body > "$DATA/ota/upload.pico8os-update.part" || fail upload_failed
+	mv "$DATA/ota/upload.pico8os-update.part" "$DATA/ota/upload.pico8os-update"; sync
+	if pico8os-ota verify "$DATA/ota/upload.pico8os-update" >/dev/null 2>&1; then
 		ota_reply ok
 	else
-		rm -f "$DATA/ota/upload.picopi-update"; ota_reply fail
+		rm -f "$DATA/ota/upload.pico8os-update"; ota_reply fail
 	fi ;;
 ota_apply)
-	f="$DATA/ota/upload.picopi-update"
-	[ -f "$f" ] || f="$DATA/ota/download.picopi-update"
+	f="$DATA/ota/upload.pico8os-update"
+	[ -f "$f" ] || f="$DATA/ota/download.pico8os-update"
 	[ -f "$f" ] || fail no_update
-	( picopi-ota apply "$f" >/dev/null 2>&1 && rm -f "$f" && sync ) &
+	( pico8os-ota apply "$f" >/dev/null 2>&1 && rm -f "$f" && sync ) &
 	ok installing ;;
 ota_check)
-	picopi-ota check >/dev/null 2>&1
+	pico8os-ota check >/dev/null 2>&1
 	ota_reply ok ;;
 ota_download)
-	( f=$(picopi-ota download 2>/dev/null) && [ -n "$f" ] && picopi-ota apply "$f" && rm -f "$f" ) >/dev/null 2>&1 &
+	( f=$(pico8os-ota download 2>/dev/null) && [ -n "$f" ] && pico8os-ota apply "$f" && rm -f "$f" ) >/dev/null 2>&1 &
 	ok downloading ;;
 ota_rollback)
-	picopi-ota rollback >/dev/null 2>&1
+	pico8os-ota rollback >/dev/null 2>&1
 	ota_reply ok ;;
 power)
 	case $(param do) in

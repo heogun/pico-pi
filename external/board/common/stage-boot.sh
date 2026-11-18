@@ -22,7 +22,7 @@ if [ -n "${FIRMWARE_DIR:-}" ]; then
 	# Overlays are only taken from ${os_prefix}overlays/ when a README exists
 	# there; otherwise the firmware would look for shared /overlays/.
 	mkdir -p "$BOOTFS/a/overlays"
-	[ -f "$BOOTFS/a/overlays/README" ] || echo "PICO-PI slot overlays" > "$BOOTFS/a/overlays/README"
+	[ -f "$BOOTFS/a/overlays/README" ] || echo "PICO8-OS slot overlays" > "$BOOTFS/a/overlays/README"
 	cp "$BINARIES_DIR"/*.dtb "$BOOTFS/a/"
 fi
 cp "$BINARIES_DIR/$KERNEL" "$BOOTFS/a/$KERNEL"

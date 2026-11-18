@@ -2,7 +2,7 @@
 // key the pages use (data-i18n, t('..'), api_/ota_ codes) exists.
 const fs = require('fs');
 const path = require('path');
-const www = path.join(__dirname, '..', 'external/rootfs-overlay/usr/share/picopi/www');
+const www = path.join(__dirname, '..', 'external/rootfs-overlay/usr/share/pico8os/www');
 const src = fs.readFileSync(path.join(www, 'i18n.js'), 'utf8') + ';module.exports={S,LANGS};';
 const m = { exports: {} };
 new Function('module', 'localStorage', 'navigator', 'document', src)(m, {}, { language: 'en' }, {});
@@ -25,7 +25,7 @@ for (const f of ['index.html', 'setup.html']) {
 // message codes produced by the device
 const api = fs.readFileSync(path.join(www, 'cgi-bin/api'), 'utf8');
 for (const r of api.matchAll(/\b(?:ok|fail) ([a-z_]+)\b/g)) if (!['ota'].includes(r[1])) used.add('api_' + r[1]);
-const ota = fs.readFileSync(path.join(www, '../../../sbin/picopi-ota'), 'utf8');
+const ota = fs.readFileSync(path.join(www, '../../../sbin/pico8os-ota'), 'utf8');
 for (const r of ota.matchAll(/\bprogress ([a-z]+)\b/g)) used.add('ota_' + r[1]);
 for (const r of ota.matchAll(/\bdie ([a-z]+)\b/g)) used.add('ota_err_' + r[1]);
 const missing = [...used].filter(k => !(k in S));

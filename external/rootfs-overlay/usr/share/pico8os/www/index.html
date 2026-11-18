@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PICO-PI</title>
+<title>PICO8-OS</title>
 <link rel="stylesheet" href="/fonts.css">
 <style>
 :root{--bg:#1d2b53;--panel:#0f1830;--fg:#fff1e8;--dim:#c2c3c7;--acc:#ff004d;--ok:#00e436;--warn:#ffa300;--line:#2a3a6a}
@@ -38,7 +38,7 @@ progress{width:100%}
 </style>
 </head>
 <body>
-<header><b>PICO-PI</b><span id="hdr">…</span><select id="langsel" style="margin-left:auto;width:auto"></select></header>
+<header><b>PICO8-OS</b><span id="hdr">…</span><select id="langsel" style="margin-left:auto;width:auto"></select></header>
 <nav id="nav">
   <button data-t="home" class="on" data-i18n="nav_home"></button>
   <button data-t="carts" data-i18n="nav_carts"></button>
@@ -84,7 +84,7 @@ progress{width:100%}
     <tr><td data-i18n="q_exit"></td><td><select id="q_EXIT_ACTION" onchange="setq(this)"><option>restart</option><option>poweroff</option><option>shell</option></select></td></tr>
     <tr><td data-i18n="q_bt"></td><td><select id="q_BLUETOOTH" onchange="setq(this)"><option>on</option><option>off</option></select></td></tr>
     <tr><td data-i18n="q_hotkey"></td><td><select id="q_HOTKEY" onchange="setq(this)"><option>on</option><option>off</option></select></td></tr>
-    <tr><td data-i18n="q_ota"></td><td><input type="text" id="q_OTA_URL" placeholder="https://example.com/picopi" onchange="setq(this)"></td></tr>
+    <tr><td data-i18n="q_ota"></td><td><input type="text" id="q_OTA_URL" placeholder="https://example.com/pico8os" onchange="setq(this)"></td></tr>
   </table></div>
   <div class="card"><h2 data-i18n="h_conf"></h2>
     <textarea id="conf" spellcheck="false"></textarea>
@@ -111,7 +111,7 @@ progress{width:100%}
   <div class="card"><h2 data-i18n="h_system"></h2><table id="otast"></table></div>
   <div class="card"><h2 data-i18n="h_upd_file"></h2>
     <p class="muted" data-i18n="p_upd_file"></p>
-    <label class="b"><span data-i18n="btn_file"></span><input type="file" accept=".picopi-update" hidden onchange="upOta(this)"></label>
+    <label class="b"><span data-i18n="btn_file"></span><input type="file" accept=".pico8os-update" hidden onchange="upOta(this)"></label>
     <progress id="otaprog" value="0" max="1" hidden></progress>
     <p><button class="b" id="otaapply" hidden onclick="otaApply()" data-i18n="btn_install"></button></p>
   </div>

@@ -1,14 +1,14 @@
 #!/bin/sh
 # OTA: count boots of a freshly installed slot (roll back after 3 failed
-# tries), and install a *.picopi-update dropped on PICO8DATA or a USB stick.
+# tries), and install a *.pico8os-update dropped on PICO8DATA or a USB stick.
 case "$1" in
 	start)
-		picopi-ota boot-check
+		pico8os-ota boot-check
 		. /usr/lib/pico8os/lib.sh
-		for f in "$DATA"/*.picopi-update "$DATA"/ota/*.picopi-update; do
+		for f in "$DATA"/*.pico8os-update "$DATA"/ota/*.pico8os-update; do
 			[ -f "$f" ] || continue
 			echo "Installing update $(basename "$f") ..." > /dev/tty1
-			if picopi-ota apply "$f"; then
+			if pico8os-ota apply "$f"; then
 				mv "$f" "$f.installed"; sync; reboot; exit 0
 			fi
 			mv "$f" "$f.failed"; sync

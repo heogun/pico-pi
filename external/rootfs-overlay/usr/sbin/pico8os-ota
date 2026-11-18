@@ -1,14 +1,14 @@
 #!/bin/sh
-# PICO-PI OTA updates: A/B system slots, signed bundles, automatic rollback.
+# PICO8-OS OTA updates: A/B system slots, signed bundles, automatic rollback.
 #
-#   picopi-ota status              print state (key=value)
-#   picopi-ota verify FILE         check signature, board and payload hashes
-#   picopi-ota apply FILE          verify, write the inactive slot, switch to it
-#   picopi-ota check               ask OTA_URL/latest-<board>.txt for a newer version
-#   picopi-ota download            download it to /data/ota/ (then: apply)
-#   picopi-ota boot-check          early boot: count tries of a new slot, roll back
-#   picopi-ota mark-good           the new slot works: make it permanent
-#   picopi-ota rollback            switch back to the other slot now
+#   pico8os-ota status              print state (key=value)
+#   pico8os-ota verify FILE         check signature, board and payload hashes
+#   pico8os-ota apply FILE          verify, write the inactive slot, switch to it
+#   pico8os-ota check               ask OTA_URL/latest-<board>.txt for a newer version
+#   pico8os-ota download            download it to /data/ota/ (then: apply)
+#   pico8os-ota boot-check          early boot: count tries of a new slot, roll back
+#   pico8os-ota mark-good           the new slot works: make it permanent
+#   pico8os-ota rollback            switch back to the other slot now
 #
 # Bundle (tar): manifest, manifest.sig (ECDSA P-256 over manifest),
 # cmdline.txt.in, boot.tar.gz (kernel, DTBs, overlays), rootfs.ext4.gz.
@@ -25,7 +25,7 @@
 . /usr/lib/pico8os/lib.sh
 load_config
 
-PUBKEY=${PUBKEY:-/etc/picopi/ota-public.pem}
+PUBKEY=${PUBKEY:-/etc/pico8os/ota-public.pem}
 STATE=${STATE:-/state/ota}
 STATUS="$RUN/ota.status"
 LOG="$DATA/logs/ota.log"
@@ -33,7 +33,7 @@ MAX_TRIES=3
 
 log() { mkdir -p "$DATA/logs"; echo "$(date '+%F %T') $*" >> "$LOG"; }
 progress() { mkdir -p "$RUN"; printf '%s\n' "$*" > "$STATUS"; log "$*"; }
-die() { progress "error $*"; echo "picopi-ota: error $*" >&2; [ -n "${WORK:-}" ] && rm -rf "$WORK"; exit 1; }
+die() { progress "error $*"; echo "pico8os-ota: error $*" >&2; [ -n "${WORK:-}" ] && rm -rf "$WORK"; exit 1; }
 
 mount_boot() {
 	mkdir -p /boot
@@ -155,10 +155,10 @@ download() {
 	case $u in http://*|https://*) ;; *) u="${OTA_URL%/}/$u" ;; esac
 	mkdir -p "$DATA/ota"
 	progress downloading "$(cat "$RUN/ota.available")"
-	wget -q -O "$DATA/ota/download.picopi-update.part" "$u" || die download
-	mv "$DATA/ota/download.picopi-update.part" "$DATA/ota/download.picopi-update"
+	wget -q -O "$DATA/ota/download.pico8os-update.part" "$u" || die download
+	mv "$DATA/ota/download.pico8os-update.part" "$DATA/ota/download.pico8os-update"
 	sync
-	echo "$DATA/ota/download.picopi-update"
+	echo "$DATA/ota/download.pico8os-update"
 }
 
 status() {

@@ -1,13 +1,13 @@
 #!/bin/sh
-# PICO-PI web management UI (busybox httpd on port 80).
-#   picopi-web start|stop|restart
+# PICO8-OS web management UI (busybox httpd on port 80).
+#   pico8os-web start|stop|restart
 # Normal mode: everything behind HTTP basic auth (user "pico", password from
-# WEB_PASSWORD or /state/web-password, shown in the PICO-PI settings cart).
+# WEB_PASSWORD or /state/web-password, shown in the PICO8-OS settings cart).
 # Wi-Fi setup (AP) mode: no auth, but the API only allows the Wi-Fi setup
 # actions, and every unknown URL serves the setup page (captive portal).
 . /usr/lib/pico8os/lib.sh
 load_config
-WWW=/usr/share/picopi/www
+WWW=/usr/share/pico8os/www
 CONF="$RUN/httpd.conf"
 
 start() {
@@ -21,7 +21,7 @@ start() {
 	# busybox httpd has no built-in type for web fonts
 	printf '.woff2:font/woff2\n.css:text/css\n' >> "$CONF"
 	umask 022
-	httpd -p 80 -h "$WWW" -c "$CONF" -r "PICO-PI"
+	httpd -p 80 -h "$WWW" -c "$CONF" -r "PICO8-OS"
 }
 
 stop() { killall httpd 2>/dev/null; sleep 0.2; }
