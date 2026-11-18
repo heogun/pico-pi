@@ -10,6 +10,9 @@ DIST_DIR   ?= $(CURDIR)/dist
 EXT        := $(CURDIR)/external
 # Extra Kconfig fragment appended to every board (CI uses it for ccache).
 EXTRA_CONFIG ?=
+# Packages built in parallel (needs BR2_PER_PACKAGE_DIRECTORIES, which
+# common.config enables). Each package also uses all cores internally.
+BR_JOBS ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
 KEYS       := $(CURDIR)/keys
 
 # Image/OTA version: sortable as text (newer = greater).
@@ -126,7 +129,7 @@ $(OUT_ROOT)/$(1)/.config: $(BR_DIR)/Makefile $(addprefix $(EXT)/fragments/,$(add
 		BR2_DEFCONFIG=$(OUT_ROOT)/$(1)/pico8os_defconfig defconfig
 
 $(1): $(OUT_ROOT)/$(1)/.config $(KEYS)/ota-public.pem
-	$(MAKE) -C $(BR_DIR) O=$(OUT_ROOT)/$(1)
+	$(MAKE) -C $(BR_DIR) O=$(OUT_ROOT)/$(1) -j$(BR_JOBS)
 	mkdir -p $(DIST_DIR)
 	cp $(OUT_ROOT)/$(1)/images/sdcard.img $(DIST_DIR)/pico8os-$(1).img
 	cp $(OUT_ROOT)/$(1)/images/*.pico8os-update $(DIST_DIR)/

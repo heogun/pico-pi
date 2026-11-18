@@ -32,3 +32,14 @@ jobs:
 
       - name: Run checks
         run: scripts/check.sh
+
+      - name: Check kernel trim
+        # Static analysis of the Pi kernel's Kconfig (the commit Buildroot builds):
+        # no option PICO8-OS needs may depend on anything linux-trim.fragment disables.
+        run: |
+          set -eu
+          commit=$(sed -n 's/.*github,raspberrypi,linux,\([0-9a-f]*\)).*/\1/p' buildroot/configs/raspberrypi3_defconfig)
+          mkdir -p /tmp/linux
+          curl -fsSL "https://codeload.github.com/raspberrypi/linux/tar.gz/$commit" \
+            | tar -xz -C /tmp/linux --wildcards '*Kconfig*' '*/arch/arm/configs/bcm*' '*/arch/arm64/configs/bcm*'
+          python3 scripts/check-kernel-trim.py "/tmp/linux/linux-$commit"

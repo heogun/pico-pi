@@ -55,6 +55,10 @@ make rpi4
 
 - 설정 변경: `make menuconfig-rpi4`
 - 빌드 없이 빠른 검사: `scripts/check.sh` (스크립트 문법, 실행 권한, 6개 보드 Buildroot 옵션, 카트 Lua, 웹 번역)
+- **빌드 속도:**
+  - Pi 커널 설정에서 쓰지 않는 서브시스템을 끕니다(`external/board/rpi/linux-trim.fragment`). 카메라와 영상, 방화벽과 트래픽 제어, NFS/CIFS 등 쓰지 않는 파일시스템, USB 가젯, 다른 회사 Wi-Fi, 오디오 HAT이 대상이고, 모듈이 약 1,250개에서 약 600개로 줄어듭니다.
+    `scripts/check-kernel-trim.py <커널 소스>`가 Kconfig 의존 관계를 분석해, 필요한 드라이버(vc4/v3d, HDMI 오디오, 게임패드, 블루투스, Broadcom Wi-Fi, 이더넷, USB 저장장치, 워치독 등)가 하나도 꺼지지 않았는지 확인합니다(CI `check` 워크플로에도 포함).
+  - `BR2_PER_PACKAGE_DIRECTORIES`로 서로 관계없는 패키지를 동시에 빌드합니다(`make -j$(BR_JOBS)`, 기본값은 CPU 수).
 
 ### GitHub Actions
 
