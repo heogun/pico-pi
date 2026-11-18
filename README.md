@@ -2,6 +2,10 @@
 
 라즈베리파이를 켜면 바로 PICO-8(Splore)이 뜨는 전용 OS. Buildroot 2026.02.3 LTS 기반의 `BR2_EXTERNAL` 트리입니다.
 
+> **비공식 프로젝트입니다.** PICO8-OS는 개인이 만든 커뮤니티 프로젝트로, PICO-8을 만든 [Lexaloffle Games](https://www.lexaloffle.com/)와 관련이 없고 Lexaloffle의 승인이나 지원을 받지 않습니다. "PICO-8"은 Lexaloffle Games의 제품 이름이며, 이 프로젝트는 PICO-8을 포함하거나 배포하지 않습니다. PICO-8은 [lexaloffle.com](https://www.lexaloffle.com/pico-8.php)에서 직접 구입하세요. 이 프로젝트에 관한 문의는 Lexaloffle이 아닌 이 저장소의 [Issues](https://github.com/heogun/pico8-os/issues)로 해 주세요.
+>
+> *PICO8-OS is an unofficial community project. It is not affiliated with, endorsed by, or supported by Lexaloffle Games. "PICO-8" is a product of Lexaloffle Games; this project does not include or distribute PICO-8 — buy it at [lexaloffle.com](https://www.lexaloffle.com/pico-8.php).*
+
 - 부팅 → busybox init → tty1에서 `pico8-session` → PICO-8 (SDL2 **kmsdrm**, X11/Wayland 없음)
 - PICO-8은 유료 소프트웨어라 이미지에 포함하지 않습니다. 사용자가 산 `pico-8_x.y.z_raspi.zip`(또는 압축을 푼 `pico-8` 폴더)을
   SD카드의 **PICO8DATA** 드라이브나 USB 메모리에 넣으면 부팅할 때 `/opt/pico8`에 설치합니다.
