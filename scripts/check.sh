@@ -20,14 +20,24 @@ scripts=$(find external/rootfs-overlay/etc/init.d external/rootfs-overlay/usr/bi
 	external/rootfs-overlay/usr/sbin external/rootfs-overlay/usr/lib \
 	external/rootfs-overlay/usr/share/picopi/www/cgi-bin external/board scripts \
 	-type f \( -name '*.sh' -o -perm -u+x \) ! -name '*.c' | sort)
+# Interpreter per file: its shebang, or "# shellcheck shell=bash" for
+# sourced bash fragments; everything else must be POSIX sh (busybox ash on
+# the device), so check it with the system sh (dash on Debian/Ubuntu).
+shell_of() {
+	if head -n 1 "$1" | grep -q '^#!.*bash' || grep -q '^# shellcheck shell=bash' "$1"; then
+		echo bash
+	else
+		echo sh
+	fi
+}
 for f in $scripts; do
 	head -c 2 "$f" | grep -q '#!' || case $f in *.sh) ;; *) continue ;; esac
-	sh -n "$f" || bad "syntax: $f"
+	sh_=$(shell_of "$f")
+	$sh_ -n "$f" || bad "syntax ($sh_): $f"
+	if command -v shellcheck >/dev/null; then
+		shellcheck -S error -s "$sh_" "$f" || bad "shellcheck: $f"
+	fi
 done
-if command -v shellcheck >/dev/null; then
-	# shellcheck disable=SC2086
-	shellcheck -S error -s sh $scripts || bad "shellcheck errors"
-fi
 
 note "== executable bits (the overlay keeps file modes)"
 for f in external/rootfs-overlay/etc/init.d/* external/rootfs-overlay/usr/bin/* \
@@ -37,10 +47,11 @@ done
 
 note "== Buildroot configs"
 [ -f "$BR_DIR/Makefile" ] || make -s buildroot BR_DIR="$BR_DIR"
+mkdir -p "$OUT"
 for b in rpi0 rpi2 rpi3 rpi4 rpi5 qemu; do
 	case $b in qemu) fr="common qemu" ;; *) fr="common rpi-common $b" ;; esac
-	if ! make -s BR_DIR="$BR_DIR" OUT_ROOT="$OUT" "$OUT/$b/.config" > "$OUT.$b.log" 2>&1; then
-		bad "$b defconfig"; tail -n 20 "$OUT.$b.log"; continue
+	if ! make -s BR_DIR="$BR_DIR" OUT_ROOT="$OUT" "$OUT/$b/.config" > "$OUT/$b.log" 2>&1; then
+		bad "$b defconfig"; tail -n 20 "$OUT/$b.log"; continue
 	fi
 	miss=""
 	for x in $fr; do

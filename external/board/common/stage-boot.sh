@@ -1,3 +1,5 @@
+# shellcheck shell=bash
+# (bash: uses arrays; sourced by the bash post-image scripts)
 # Sourced by post-image scripts. Builds $BINARIES_DIR/bootfs, the content of
 # the boot partition:
 #   <firmware files>, config.txt, slot.txt ("os_prefix=a/")
