@@ -20,7 +20,7 @@ cat > "$UPD/manifest" <<MANIFEST
 format=1
 board=$PICO8OS_BOARD
 version=$PICO8OS_VERSION
-rootfs_size=$(stat -c %s "$BINARIES_DIR/rootfs.ext4")
+rootfs_size=$(stat -L -c %s "$BINARIES_DIR/rootfs.ext4")   # -L: rootfs.ext4 is a symlink
 rootfs_sha256=$(sum "$UPD/rootfs.ext4.gz")
 boot_sha256=$(sum "$UPD/boot.tar.gz")
 cmdline_sha256=$(sum "$UPD/cmdline.txt.in")
