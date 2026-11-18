@@ -93,6 +93,8 @@ make rpi4
 
 ## 사용법
 
+Raspberry Pi에서 `FOLDER`, 클립보드, GPIO 등 데스크톱·하드웨어 의존 기능의 동작과 대안은 [PICO-8 미지원·제한 명령과 지원 계획](docs/pico8-command-compatibility.md)을 참고하세요.
+
 SD카드 파티션 구성:
 
 | 파티션 | 형식 | 용도 | 런타임 |
