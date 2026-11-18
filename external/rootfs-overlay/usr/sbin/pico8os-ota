@@ -314,10 +314,14 @@ tryboot_arm() {
 	mount_boot || return 1
 	if ! tryboot_files "$slot"; then umount_boot; return 1; fi
 	umount_boot
-	"$TRYBOOT" set >/dev/null 2>&1 || return 1
-	# the try counts before it starts: a hang never gets to count it
-	if ! pending_write "$slot" "$prev" "$ver" $((tries + 1)) try; then
+	# The try is on disk before the flag can start it: a reset at any point
+	# never boots a try that was not counted.
+	pending_write "$slot" "$prev" "$ver" $((tries + 1)) try || return 1
+	if ! "$TRYBOOT" set >/dev/null 2>&1; then
 		"$TRYBOOT" clear >/dev/null 2>&1
+		# not started: give the try back (if even that fails, the update
+		# only loses one of its tries)
+		pending_write "$slot" "$prev" "$ver" "$tries" try
 		return 1
 	fi
 	log "tryboot of slot $slot (try $((tries + 1))/$MAX_TRIES)"
@@ -373,7 +377,13 @@ boot_check_try() {
 			[ "$tries" -gt 0 ] || return 0
 			if [ "$tries" -lt "$MAX_TRIES" ]; then
 				log "try $tries of slot $slot did not finish: trying again"
-				do_reboot; exit 3
+				# Reboot only into an armed and counted try. Without one a
+				# reboot would come back here with the same count, forever:
+				# keep running this (good) slot instead.
+				if tryboot_arm; then sync; reboot; exit 3; fi
+				log "cannot start another try of slot $slot; staying on $prev"
+				progress "error notryboot $ver"
+				return 0
 			fi
 			log "slot $slot failed $tries tries: giving up update $ver"
 			mount_boot || die bootmount
