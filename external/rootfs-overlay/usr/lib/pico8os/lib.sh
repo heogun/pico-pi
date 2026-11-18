@@ -206,12 +206,16 @@ PICO8_MAX_MB=${PICO8_MAX_MB:-96}         # unpacked package, whole zip
 PICO8_MAX_FILES=${PICO8_MAX_FILES:-500}
 
 # Private scratch space: a size-limited tmpfs when running as root on the
-# console (never the system or data partition), else a plain temp dir.
+# console (never the system or data partition), else a plain temp dir
+# (tests, PICO8_NO_TMPFS). On the console, no tmpfs means no install: an
+# unlimited temp dir could fill the root's RAM disk.
 work_open() {
 	WORKDIR=$(mktemp -d "${TMPDIR:-/tmp}/pico8os.XXXXXX") || return 1
 	chmod 700 "$WORKDIR"
 	if [ "$(id -u)" = 0 ] && [ -z "${PICO8_NO_TMPFS:-}" ]; then
-		mount -t tmpfs -o "size=$((PICO8_MAX_MB + 8))m,mode=0700,nosuid,nodev,noexec" tmpfs "$WORKDIR" 2>/dev/null || true
+		if ! mount -t tmpfs -o "size=$((PICO8_MAX_MB + 8))m,mode=0700,nosuid,nodev,noexec" tmpfs "$WORKDIR" 2>/dev/null; then
+			rmdir "$WORKDIR"; WORKDIR=; return 1
+		fi
 	fi
 }
 work_close() {
@@ -247,6 +251,15 @@ install_pico8() {
 	work_open || { say "ERROR: no temporary space"; return 1; }
 	if [ -d "$src" ]; then
 		top=$src
+		# same limit as for a zip, counted over the files that get copied
+		total=0
+		for f in $PICO8_BIN_FILES $PICO8_DOC_FILES; do
+			[ -f "$top/$f" ] && [ ! -L "$top/$f" ] || continue
+			total=$(( total + $(wc -c < "$top/$f") ))
+		done
+		if [ "$total" -gt $((PICO8_MAX_MB * 1048576)) ]; then
+			work_close; say "REFUSED: the PICO-8 files in $(basename "$src") are too large."; return 4
+		fi
 	else
 		if ! zip_check "$src"; then
 			work_close; say "REFUSED: $(basename "$src") is not a usable PICO-8 zip (too large or unsafe paths)."; return 4
@@ -325,12 +338,20 @@ scan_usb() {
 		done
 		[ $ok = 1 ] || continue
 		z=$(ls -1 "$mnt"/pico-8*raspi*.zip 2>/dev/null | sort | tail -n 1)
-		if [ -n "$z" ] && [ -f "$z" ] && [ ! -L "$z" ] &&
-		   [ "$(stat -c %s "$z")" -le $((USB_MAX_MB * 1048576)) ]; then
-			say "Copying $(basename "$z") from $dev ..."
-			cp "$z" "$DATA/" && sync
-			umount "$mnt"
-			return 0
+		if [ -n "$z" ] && [ -f "$z" ] && [ ! -L "$z" ]; then
+			zb=$(stat -c %s "$z")
+			free=$(df -k "$DATA" 2>/dev/null | awk 'NR == 2 {print $4}')
+			if [ "$zb" -le $((USB_MAX_MB * 1048576)) ] &&
+			   [ $(( ${free:-0} * 1024 - zb )) -ge $((32 * 1048576)) ]; then
+				say "Copying $(basename "$z") from $dev ..."
+				# to a fresh name first (O_EXCL), then renamed into place
+				t=$(mktemp "$DATA/.usb.XXXXXX") &&
+				if cp "$z" "$t" && mv "$t" "$DATA/$(basename "$z")"; then sync
+				else rm -f "$t"; fi
+				umount "$mnt"
+				return 0
+			fi
+			say "$(basename "$z") is too large or PICO8DATA is full."
 		fi
 		umount "$mnt"
 	done

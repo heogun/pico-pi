@@ -8,7 +8,15 @@
 #   pico8os-ota download            download it to /data/ota/ (then: apply)
 #   pico8os-ota boot-check          early boot: count tries of a new slot, roll back
 #   pico8os-ota mark-good           the new slot works: make it permanent
-#   pico8os-ota rollback            switch back to the other slot now
+#   pico8os-ota rollback            boot the other slot (if it is installed) or
+#                                   cancel an update that waits for a reboot
+#
+# A slot can be booted only while its boot files are complete
+# (/boot/<slot>/cmdline.txt). They are removed before the slot is written
+# and put back (rename of <slot>.new) only after the written root
+# filesystem was read back and matched the signed hash; a slot that failed
+# its boot tries loses them too. slot.txt never points at a slot without
+# them.
 #
 # Bundle (tar): manifest, manifest.sig (ECDSA P-256 over manifest),
 # cmdline.txt.in, boot.tar.gz (kernel, DTBs, overlays), rootfs.ext4.gz.
@@ -23,7 +31,7 @@
 #   valid VER | updated VER | uptodate VER | available VER | downloading VER
 #   rolledback | error CODE [args]   (CODE: nofile notupdate unsigned badsig
 #   format board older corrupt nofit write bootmount bootfiles nourl
-#   unreachable badlatest download toolarge nospace busy verifywrite)
+#   unreachable badlatest download toolarge nospace busy verifywrite noslot)
 . /usr/lib/pico8os/lib.sh
 load_config
 
@@ -44,11 +52,30 @@ mount_boot() {
 }
 umount_boot() { sync; umount /boot 2>/dev/null; }
 
-# Atomic-ish flip: write slot.txt.new, then rename over slot.txt.
-set_boot_slot() {
-	mount_boot || die bootmount
-	echo "os_prefix=$1/" > /boot/slot.txt.new && sync && mv /boot/slot.txt.new /boot/slot.txt
-	umount_boot
+# With /boot mounted:
+slot_bootable() { [ -f "/boot/$1/cmdline.txt" ]; }
+boot_target() { sed -n 's#^os_prefix=\([ab]\)/$#\1#p' /boot/slot.txt 2>/dev/null | head -n 1; }
+# write_slot SLOT: atomic-ish flip (write slot.txt.new, rename over
+# slot.txt), only to a slot that can boot.
+write_slot() {
+	slot_bootable "$1" || return 1
+	[ "$(boot_target)" = "$1" ] && return 0
+	echo "os_prefix=$1/" > /boot/slot.txt.new && sync && mv /boot/slot.txt.new /boot/slot.txt && sync
+}
+# unboot_slot SLOT: remove its boot files (never the slot slot.txt names).
+unboot_slot() {
+	[ "$(boot_target)" != "$1" ] || return 1
+	rm -rf "/boot/$1.new" "/boot/$1.bad"
+	[ -e "/boot/$1" ] && { mv "/boot/$1" "/boot/$1.bad" && rm -rf "/boot/$1.bad" || return 1; }
+	sync
+}
+
+# pending_write SLOT PREVIOUS VERSION TRIES: rewrite + rename, so a power
+# cut never leaves a half-written state.
+pending_write() {
+	mkdir -p "$STATE"
+	printf 'slot=%s\nprevious=%s\nversion=%s\ntries=%s\n' "$1" "$2" "$3" "$4" > "$STATE/pending.new"
+	sync; mv "$STATE/pending.new" "$STATE/pending"; sync
 }
 
 manifest_get() { sed -n "s/^$1=//p" "$2" | head -n 1; }
@@ -60,21 +87,16 @@ SMALL_MAX=65536         # manifest, signature, cmdline.txt.in, latest.txt
 DATA_RESERVE_MB=32      # keep this much of PICO8DATA free when downloading
 
 # One OTA operation at a time (web UI, settings cart and boot can all start
-# one). A lock left by a dead process is taken over.
+# one): flock on fd 9, released by the kernel when the process ends, so a
+# crashed run never leaves a stale lock. "wait" blocks instead of failing.
 ota_lock() {
 	mkdir -p "$RUN"
-	if ! mkdir "$OTA_LOCK" 2>/dev/null; then
-		pid=$(cat "$OTA_LOCK/pid" 2>/dev/null)
-		if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then die busy; fi
-		rm -rf "$OTA_LOCK"; mkdir "$OTA_LOCK" 2>/dev/null || die busy
-	fi
-	echo $$ > "$OTA_LOCK/pid"
-	LOCKED=1
+	exec 9> "$OTA_LOCK" || die busy
+	if [ "${1:-}" = wait ]; then flock 9 || die busy; else flock -n 9 || die busy; fi
 }
 cleanup() {
 	[ -n "${WORK:-}" ] && { umount "$WORK" 2>/dev/null; rm -rf "$WORK"; }
-	[ -n "${LOCKED:-}" ] && rm -rf "$OTA_LOCK"
-	WORK= LOCKED=
+	WORK=
 }
 trap cleanup EXIT
 trap 'exit 1' INT TERM
@@ -85,7 +107,8 @@ work_new() {
 	mkdir -p "$RUN"
 	WORK=$(mktemp -d "$RUN/ota.XXXXXX") || die write
 	chmod 700 "$WORK"
-	mount -t tmpfs -o "size=$((BOOT_MAX_MB + 1))m,mode=0700,nosuid,nodev,noexec" tmpfs "$WORK" 2>/dev/null
+	mount -t tmpfs -o "size=$((BOOT_MAX_MB + 1))m,mode=0700,nosuid,nodev,noexec" tmpfs "$WORK" 2>/dev/null \
+		|| [ -n "${OTA_NO_TMPFS:-}" ] || die write
 }
 
 target_part() { slot_part "$(other_slot "$(current_slot)")"; }
@@ -164,31 +187,110 @@ write_rootfs() {
 apply() {
 	f=$1
 	ota_lock
+	cur=$(current_slot); new=$(other_slot "$cur"); part=$(slot_part "$new")
+	# The running slot is still on trial (not marked good yet): the other
+	# slot is the way back, never overwrite it now.
+	if [ -f "$STATE/pending" ] && [ "$(manifest_get slot "$STATE/pending")" = "$cur" ]; then
+		die busy
+	fi
 	progress verifying
 	verify "$f"
 	ver=$(manifest_get version "$WORK/manifest")
-	cur=$(current_slot); new=$(other_slot "$cur"); part=$(slot_part "$new")
-	# Forget an update that was half-installed into this slot before.
-	rm -f "$STATE/pending"
+	# Before the target slot is touched: the running slot boots next
+	# whatever happens, and the target cannot be booted (its boot files go,
+	# a scheduled update into it is forgotten) until it is written and
+	# checked.
+	mount_boot || die bootmount
+	{ write_slot "$cur" && unboot_slot "$new"; } || { umount_boot; die bootfiles; }
+	umount_boot
+	rm -f "$STATE/pending"; sync
 	progress writing "$ver" "$new"
 	write_rootfs "$f" "$part"
 	progress kernel "$new"
 	mount_boot || die bootmount
-	rm -rf "/boot/$new.new" && mkdir -p "/boot/$new.new"
+	mkdir -p "/boot/$new.new" || { umount_boot; die bootfiles; }
 	tar -xzf "$WORK/boot.tar.gz" -C "/boot/$new.new" || { umount_boot; die bootfiles; }
 	sed -e "s#@ROOT@#$part#" -e "s#@SLOT@#$new#" "$WORK/cmdline.txt.in" > "/boot/$new.new/cmdline.txt" \
 		|| { umount_boot; die bootfiles; }
 	sync
-	rm -rf "/boot/$new" && mv "/boot/$new.new" "/boot/$new" || { umount_boot; die bootfiles; }
+	mv "/boot/$new.new" "/boot/$new" || { umount_boot; die bootfiles; }
+	sync
+	pending_write "$new" "$cur" "$ver" 0
+	write_slot "$new" || { rm -f "$STATE/pending"; umount_boot; die bootfiles; }
 	umount_boot
-	mkdir -p "$STATE"
-	printf 'slot=%s\nprevious=%s\nversion=%s\ntries=0\n' "$new" "$cur" "$ver" > "$STATE/pending.new"
-	sync; mv "$STATE/pending.new" "$STATE/pending"; sync
-	set_boot_slot "$new"
 	progress ready "$ver"
 }
 
+# Early boot (S06ota), no network needed: count the boots of a freshly
+# installed slot. After MAX_TRIES boots that never reached mark-good, boot
+# the previous slot again and make the failed one unbootable.
 boot_check() {
+	ota_lock wait
+	[ -f "$STATE/pending" ] || return 0
+	slot=$(manifest_get slot "$STATE/pending")
+	prev=$(manifest_get previous "$STATE/pending")
+	ver=$(manifest_get version "$STATE/pending")
+	tries=$(manifest_get tries "$STATE/pending")
+	case $tries in ''|*[!0-9]*) tries=0 ;; esac
+	case $slot$prev in
+		ab|ba) ;;
+		*) log "bad pending state; dropping it"; rm -f "$STATE/pending"; sync; return 0 ;;
+	esac
+	if [ "$(current_slot)" != "$slot" ]; then
+		# The firmware booted the other slot (rollback, slot.txt edited by
+		# hand): the update is not running, forget it.
+		log "pending slot $slot not running; dropping update"
+		rm -f "$STATE/pending"; sync; return 0
+	fi
+	tries=$((tries + 1))
+	if [ "$tries" -gt "$MAX_TRIES" ]; then
+		log "slot $slot failed $MAX_TRIES boots: rolling back to $prev"
+		mount_boot || die bootmount
+		if ! write_slot "$prev"; then
+			umount_boot
+			log "previous slot $prev cannot boot; staying on $slot"
+			rm -f "$STATE/pending"; sync; return 0
+		fi
+		unboot_slot "$slot"     # running from RAM; its kernel is not needed now
+		umount_boot
+		rm -f "$STATE/pending"; sync
+		reboot; exit 0
+	fi
+	pending_write "$slot" "$prev" "$ver" "$tries"
+	log "booting new slot $slot (try $tries/$MAX_TRIES)"
+}
+
+# The new slot works (S99otagood: up for a while with the PICO-8 session
+# running): stop counting. Only for the slot that is running; an update
+# that was installed but not booted yet stays pending.
+mark_good() {
+	ota_lock wait
+	[ -f "$STATE/pending" ] || return 0
+	[ "$(manifest_get slot "$STATE/pending")" = "$(current_slot)" ] || return 0
+	ver=$(manifest_get version "$STATE/pending")
+	rm -f "$STATE/pending"; sync
+	log "slot $(current_slot) marked good"
+	progress updated "$ver"
+}
+
+# Boot the other slot, only if it is complete. If an installed update is
+# waiting for a reboot, cancel it instead (keep booting this slot).
+rollback() {
+	ota_lock
+	cur=$(current_slot); other=$(other_slot "$cur")
+	mount_boot || die bootmount
+	if [ "$(boot_target)" = "$cur" ]; then to=$other; else to=$cur; fi
+	if ! slot_bootable "$to"; then umount_boot; die noslot "$to"; fi
+	write_slot "$to" || { umount_boot; die bootfiles; }
+	umount_boot
+	rm -f "$STATE/pending"; sync
+	progress rolledback
+}
+
+# OTA_URL/latest-<board>.txt:  version=...  url=...  (url may be relative to
+# OTA_URL). Flat, so a GitHub Release works as the server:
+#   OTA_URL=https://github.com/<user>/<repo>/releases/latest/download
+check() {
 	[ -n "$OTA_URL" ] || die nourl
 	mkdir -p "$RUN"
 	wget -q -T 30 -O - "${OTA_URL%/}/latest-$(os_board).txt" 2>/dev/null | head -c $SMALL_MAX > "$RUN/latest.txt"
@@ -214,8 +316,8 @@ download() {
 	max=$(max_bundle); [ "$free" -lt "$max" ] && max=$free
 	[ "$max" -gt 0 ] || die nospace
 	progress downloading "$(cat "$RUN/ota.available")"
-	part="$DATA/ota/download.pico8os-update.part"
-	rm -f "$part"
+	# a fresh name (O_EXCL): nothing planted under it beforehand is followed
+	part=$(mktemp "$DATA/ota/.download.XXXXXX") || die download
 	wget -q -T 60 -O - "$u" 2>/dev/null | head -c $((max + 1)) > "$part"
 	n=$(file_bytes "$part")
 	[ "$n" -gt 0 ] || { rm -f "$part"; die download; }
@@ -245,9 +347,6 @@ case ${1:-} in
 	download) ota_lock; download ;;
 	boot-check) boot_check ;;
 	mark-good) mark_good ;;
-	rollback)
-		ota_lock
-		set_boot_slot "$(other_slot "$(current_slot)")"; rm -f "$STATE/pending"; sync
-		progress rolledback ;;
-	*) sed -n '2,13s/^# \{0,1\}//p' "$0"; exit 2 ;;
+	rollback) rollback ;;
+	*) sed -n '2,14s/^# \{0,1\}//p' "$0"; exit 2 ;;
 esac

@@ -10,6 +10,6 @@ if [ "$BLUETOOTH" = off ]; then
 	(sleep 3; bluetoothctl power off >/dev/null 2>&1) &
 	exit 0
 fi
-case $BT_PAIR_SECONDS in ''|*[!0-9]*) BT_PAIR_SECONDS=60 ;; esac
+case $BT_PAIR_SECONDS in ''|*[!0-9]*) BT_PAIR_SECONDS=0 ;; esac   # invalid: no window
 [ "$BT_PAIR_SECONDS" -gt 0 ] && pico8-btpair "$BT_PAIR_SECONDS" >/dev/null 2>&1 &
 exit 0

@@ -3,3 +3,9 @@ CONFIG_NTPD=y
 # CONFIG_FEATURE_NTPD_CONF is not set
 # The web UI uses lighttpd (HTTPS); no busybox httpd on the image
 # CONFIG_HTTPD is not set
+# Used by the system scripts (file sizes and owners in OTA, the root agent
+# and the web API; the Bluetooth pairing confirmation). Not in Buildroot's
+# default busybox config; scripts/check.sh checks every applet they call.
+CONFIG_STAT=y
+CONFIG_FEATURE_STAT_FORMAT=y
+CONFIG_TIMEOUT=y

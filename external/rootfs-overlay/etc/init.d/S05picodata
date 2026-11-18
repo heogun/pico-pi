@@ -16,11 +16,19 @@ mount_data() {
 		fi
 	done
 	echo "S05picodata: data partition not found, using tmpfs" >&2
-	mount -t tmpfs -o size=64m,nosuid,nodev,noexec,uid=1000,gid=1001,mode=0770 tmpfs /data
-	# tmpfs allows symlinks (FAT does not): keep the logs root writes to
-	# out of the users' reach.
-	mkdir -p /data/carts /data/screenshots /data/pico8 /data/logs
+	# tmpfs, unlike FAT, has owners and symlinks, so nobody but root may
+	# replace what root writes to. /data is root's, sticky and writable for
+	# group www (web UI uploads, pico8os.txt): www can add entries but never
+	# remove or rename root's. pico gets its own subdirectories only.
+	mount -t tmpfs -o size=64m,nosuid,nodev,noexec,uid=0,gid=1001,mode=1775 tmpfs /data
+	mkdir -p /data/carts /data/screenshots /data/pico8 /data/logs /data/ota /data/.webtmp
+	chown pico:www /data/carts /data/screenshots /data/pico8; chmod 0770 /data/carts /data/screenshots /data/pico8
 	chown root:www /data/logs; chmod 0750 /data/logs
+	chown root:www /data/ota; chmod 1770 /data/ota
+	chown www:www /data/.webtmp; chmod 0700 /data/.webtmp
+	# files root writes at the top level: root's, so www cannot swap them
+	: > /data/web-certificate.txt; : > /data/wifi-setup.txt
+	chmod 0644 /data/web-certificate.txt /data/wifi-setup.txt
 }
 
 mount_state() {

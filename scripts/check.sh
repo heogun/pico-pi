@@ -62,6 +62,17 @@ for b in rpi0 rpi2 rpi3 rpi4 rpi5 qemu; do
 	if [ -n "$miss" ]; then bad "$b dropped:$miss"; else note "$b ok"; fi
 done
 
+note "== busybox applets the scripts need"
+# Buildroot's default busybox config plus board/common/busybox.fragment.
+bbfrag=external/board/common/busybox.fragment
+for a in STAT FEATURE_STAT_FORMAT TIMEOUT FLOCK MKTEMP OD DD; do
+	if grep -q "^CONFIG_$a=y" "$bbfrag"; then continue; fi
+	if grep -q "^# CONFIG_$a is not set" "$bbfrag" ||
+	   ! grep -q "^CONFIG_$a=y" "$BR_DIR/package/busybox/busybox.config"; then
+		bad "busybox applet/feature $a is not enabled"
+	fi
+done
+
 note "== settings cart Lua"
 if command -v luajit >/dev/null; then
 	tmp=$(mktemp)

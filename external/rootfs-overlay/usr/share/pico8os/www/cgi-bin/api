@@ -118,14 +118,26 @@ param() {
 	return 1
 }
 body() { head -c "${CONTENT_LENGTH:-0}"; }
+# save_body DIR NAME: store the whole request body as DIR/NAME (written to a
+# hidden .part file first). Fails, leaving nothing behind, when the disk is
+# full or the client sent less than it announced.
+save_body() {
+	sb_part="$1/.$2.part"
+	if body > "$sb_part" && [ "$(wc -c < "$sb_part")" -eq "${CONTENT_LENGTH:-0}" ] \
+		&& mv "$sb_part" "$1/$2" && sync; then
+		return 0
+	fi
+	rm -f "$sb_part"; return 1
+}
 # room_for MAXBYTES: the upload is at most MAXBYTES and leaves 32 MB of
 # PICO8DATA free.
+# (Own variable names: callers keep the file name in $n.)
 room_for() {
-	n=${CONTENT_LENGTH:-0}
-	case $n in ''|*[!0-9]*) return 1 ;; esac
-	[ "$n" -le "$1" ] || return 1
-	free=$(df -k "$DATA" 2>/dev/null | awk 'NR == 2 {print $4}')
-	[ $(( ${free:-0} * 1024 - n )) -ge $((32 * 1048576)) ]
+	rf_len=${CONTENT_LENGTH:-0}
+	case $rf_len in ''|*[!0-9]*) return 1 ;; esac
+	[ "$rf_len" -le "$1" ] || return 1
+	rf_free=$(df -k "$DATA" 2>/dev/null | awk 'NR == 2 {print $4}')
+	[ $(( ${rf_free:-0} * 1024 - rf_len )) -ge $((32 * 1048576)) ]
 }
 need_post() { [ "$REQUEST_METHOD" = POST ] || fail post_required; }  # (also enforced globally below)
 
@@ -279,7 +291,7 @@ cart_put)
 	n=$(safe_name "$(param name)") || fail bad_name
 	case $n in *.p8|*.p8.png) ;; *) fail only_carts ;; esac
 	[ "${CONTENT_LENGTH:-0}" -le 1048576 ] || fail too_large
-	body > "$DATA/carts/.$n.part" && mv "$DATA/carts/.$n.part" "$DATA/carts/$n" && sync
+	save_body "$DATA/carts" "$n" || fail upload_failed
 	ok uploaded "$n" ;;
 cart_del)
 	n=$(safe_name "$(param name)") || fail bad_name
@@ -312,8 +324,9 @@ pico8_put)
 	n=$(safe_name "$(param name)") || fail bad_name
 	case $n in pico-8*raspi*.zip) ;; *) fail expect_zip ;; esac
 	room_for $((128 * 1048576)) || fail too_large
-	body > "$DATA/.$n.part" && mv "$DATA/.$n.part" "$DATA/$n" && sync
-	priv restart_pico8 >/dev/null 2>&1   # the session installs it on start
+	save_body "$DATA" "$n" || fail upload_failed
+	# the session installs it on start
+	priv restart_pico8 >/dev/null 2>&1 || fail restart_failed "$n"
 	ok zip_installing "$n" ;;
 bt_list)
 	hdr
@@ -347,8 +360,7 @@ ota_put)
 	need_post
 	room_for $((320 * 1048576)) || fail too_large
 	mkdir -p "$DATA/ota"
-	body > "$DATA/ota/upload.pico8os-update.part" || fail upload_failed
-	mv "$DATA/ota/upload.pico8os-update.part" "$DATA/ota/upload.pico8os-update"; sync
+	save_body "$DATA/ota" upload.pico8os-update || fail upload_failed
 	if st=$(PRIV_TIMEOUT=300 priv ota_verify); then
 		ok ota "$st"
 	else

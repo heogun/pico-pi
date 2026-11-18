@@ -6,6 +6,11 @@
 # window pairs ONE controller and closes; the paired device is logged with
 # its name and address (logs/bluetooth.log, web UI) so it can be checked
 # and removed. Afterwards the adapter is neither pairable nor discoverable.
+# Name and icon alone are not trusted:
+#  - if two or more unpaired controllers are in pairing mode at once, none
+#    is paired (one of them may be impersonating the other);
+#  - a paired controller is kept (trusted) only after a button is pressed
+#    on it within CONFIRM_SECONDS; otherwise it is removed again.
 # Put the controller in pairing mode during the window, e.g.
 #   PS4/PS5: hold SHARE/CREATE + PS     Switch Pro / Joy-Con: SYNC button
 #   Xbox One/Series: hold the pair button   8BitDo: see its manual
@@ -14,6 +19,9 @@
 command -v bluetoothctl >/dev/null || exit 0
 
 secs=${1:-90}
+case $secs in ''|*[!0-9]*) secs=90 ;; esac
+CONFIRM_SECONDS=30
+SETTLE_SECONDS=5      # look for a second candidate this long before pairing
 LOG="$DATA/logs/bluetooth.log"
 LOCK=/tmp/btpair.lock
 TRIED=/tmp/btpair.tried
@@ -51,25 +59,76 @@ is_controller() {
 	return 1
 }
 
+# Unpaired controllers in pairing mode right now (one MAC per line).
+candidates() {
+	for mac in $(bluetoothctl devices 2>/dev/null | awk '$1 == "Device" {print $2}'); do
+		grep -q -x "$mac" "$TRIED" && continue
+		bluetoothctl info "$mac" 2>/dev/null | grep -q 'Paired: yes' && continue
+		is_controller "$mac" && echo "$mac"
+	done
+}
+
+# event_dev MAC: the /dev/input/event* node of that connected controller
+# (BlueZ sets the input device's "uniq" to its address, lower case).
+event_dev() {
+	want=$(printf '%s' "$1" | tr 'A-F' 'a-f')
+	for u in /sys/class/input/event*/device/uniq; do
+		[ "$(tr 'A-F' 'a-f' < "$u" 2>/dev/null)" = "$want" ] || continue
+		e=${u%/device/uniq}; echo "/dev/input/${e##*/}"; return 0
+	done
+	return 1
+}
+
+# button_pressed MAC SECONDS: a key/button press (EV_KEY, value 1) arrives
+# from that controller within SECONDS. struct input_event is 16 bytes on
+# 32-bit kernels and 24 on 64-bit ones; type, code and value are its last
+# 8 bytes. One file descriptor stays open so no event is lost between reads.
+button_pressed() {
+	stop=$(( $(date +%s) + $2 ))
+	until dev=$(event_dev "$1"); do
+		[ "$(date +%s)" -lt "$stop" ] || return 1
+		sleep 1
+	done
+	case $(uname -m) in aarch64|arm64|x86_64) sz=24 ;; *) sz=16 ;; esac
+	left=$(( stop - $(date +%s) )); [ "$left" -gt 0 ] || return 1
+	timeout "$left" sh -c '
+		exec 3< "$1" || exit 1
+		while :; do
+			dd bs="$2" count=1 <&3 2>/dev/null | od -An -v -tu2 | awk -v n=$(( $2 / 2 )) "
+				{ for (i = 1; i <= NF; i++) w[++c] = \$i }
+				END { exit !(c == n && w[n - 3] == 1 && w[n - 1] == 1) }" && exit 0
+		done' sh "$dev" "$sz"
+}
+
 bluetoothctl --timeout "$secs" scan on >/dev/null 2>&1 &
 end=$(( $(date +%s) + secs ))
 : > "$TRIED"
 while [ "$(date +%s)" -lt "$end" ]; do
-	for mac in $(bluetoothctl devices 2>/dev/null | awk '$1 == "Device" {print $2}'); do
-		grep -q "$mac" "$TRIED" && continue
-		bluetoothctl info "$mac" 2>/dev/null | grep -q 'Paired: yes' && continue
-		is_controller "$mac" || continue
-		echo "$mac" >> "$TRIED"
-		name=$(bluetoothctl info "$mac" | sed -n 's/^[[:space:]]*Name: //p')
-		if bluetoothctl --agent NoInputNoOutput --timeout 25 pair "$mac" 2>&1 | grep -q -i 'pairing successful'; then
-			bluetoothctl trust "$mac" >/dev/null 2>&1
-			bluetoothctl --timeout 10 connect "$mac" >/dev/null 2>&1
-			log "paired $name ($mac); pairing window closed"
-			exit 0
-		else
-			log "pairing failed: $name ($mac)"
-		fi
-	done
-	sleep 2
+	mac=$(candidates | head -n 1)
+	[ -n "$mac" ] || { sleep 2; continue; }
+	# Wait a moment: a second controller in pairing mode means we cannot
+	# tell which one the person meant.
+	sleep "$SETTLE_SECONDS"
+	all=$(candidates)
+	if [ "$(printf '%s\n' "$all" | grep -c .)" -gt 1 ]; then
+		log "several controllers in pairing mode ($(echo $all)); none paired. Pair one at a time."
+		printf '%s\n' $all >> "$TRIED"
+		continue
+	fi
+	echo "$mac" >> "$TRIED"
+	name=$(bluetoothctl info "$mac" | sed -n 's/^[[:space:]]*Name: //p')
+	if ! bluetoothctl --agent NoInputNoOutput --timeout 25 pair "$mac" 2>&1 | grep -q -i 'pairing successful'; then
+		log "pairing failed: $name ($mac)"
+		continue
+	fi
+	bluetoothctl --timeout 10 connect "$mac" >/dev/null 2>&1
+	log "paired $name ($mac); waiting ${CONFIRM_SECONDS}s for a button press on it"
+	if button_pressed "$mac" "$CONFIRM_SECONDS"; then
+		bluetoothctl trust "$mac" >/dev/null 2>&1
+		log "kept $name ($mac): button pressed; pairing window closed"
+		exit 0
+	fi
+	bluetoothctl remove "$mac" >/dev/null 2>&1
+	log "removed $name ($mac): no button pressed on it"
 done
 log "pairing window closed"
