@@ -1,0 +1,5 @@
+config BR2_PACKAGE_PICO8_HOTKEY
+	bool "pico8-hotkey"
+	help
+	  Force-restart a frozen PICO-8: Ctrl+Alt+Backspace on a keyboard
+	  or SELECT+START held for 3 seconds on a gamepad.

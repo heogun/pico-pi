@@ -1,0 +1,16 @@
+source "$BR2_EXTERNAL_PICOPI_PATH/package/pico8-hotkey/Config.in"
+source "$BR2_EXTERNAL_PICOPI_PATH/package/sdl-gamecontrollerdb/Config.in"
+
+config BR2_PACKAGE_PICOPI_SDL2_HIDAPI
+	bool "SDL2 HIDAPI joystick drivers (PICO-PI override)"
+	depends on BR2_PACKAGE_SDL2
+	depends on BR2_TOOLCHAIN_HAS_THREADS # libusb
+	depends on BR2_TOOLCHAIN_GCC_AT_LEAST_4_9 # libusb
+	select BR2_PACKAGE_LIBUSB
+	help
+	  Buildroot builds SDL2 with --disable-hidapi-joystick and
+	  --disable-hidapi-libusb. This turns both back on: SDL then
+	  talks to PlayStation, Switch, Xbox, Steam and other
+	  controllers directly over hidraw/libusb (better button
+	  mapping, Joy-Con pairs, GameCube USB adapter), on top of the
+	  kernel drivers.

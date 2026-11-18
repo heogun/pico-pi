@@ -1,0 +1,13 @@
+#!/bin/sh
+# Web management UI and the settings-cart agent.
+case "$1" in
+	start)
+		picopi-web start >/dev/null 2>&1
+		start-stop-daemon -S -b -m -p /run/picopi-agent.pid -x /usr/sbin/picopi-agent
+		;;
+	stop)
+		start-stop-daemon -K -p /run/picopi-agent.pid 2>/dev/null
+		picopi-web stop
+		;;
+esac
+exit 0

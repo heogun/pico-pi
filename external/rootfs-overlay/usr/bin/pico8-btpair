@@ -1,0 +1,62 @@
+#!/bin/sh
+# Pair nearby Bluetooth game controllers automatically.
+#   pico8-btpair [SECONDS]   (default 90)
+# Put the controller in pairing mode during the window, e.g.
+#   PS4/PS5: hold SHARE/CREATE + PS     Switch Pro / Joy-Con: SYNC button
+#   Xbox One/Series: hold the pair button   8BitDo: see its manual
+# Runs from boot (BT_PAIR_SECONDS) and from the Ctrl+Alt+P hotkey.
+. /usr/lib/pico8os/lib.sh
+command -v bluetoothctl >/dev/null || exit 0
+
+secs=${1:-90}
+LOG="$DATA/logs/bluetooth.log"
+LOCK=/tmp/btpair.lock
+TRIED=/tmp/btpair.tried
+mkdir "$LOCK" 2>/dev/null || exit 0     # one pairing window at a time
+trap 'bluetoothctl scan off >/dev/null 2>&1; rm -rf "$LOCK"' EXIT INT TERM
+
+log() { mkdir -p "$DATA/logs"; echo "$(date '+%F %T') $*" >> "$LOG"; }
+
+# Wait for bluetoothd and the adapter (hci_uart loads late at boot).
+i=0
+until bluetoothctl show 2>/dev/null | grep -q 'Controller'; do
+	i=$((i + 1)); [ $i -ge 30 ] && { log "no Bluetooth adapter"; exit 0; }
+	sleep 1
+done
+bluetoothctl power on >/dev/null 2>&1
+bluetoothctl pairable on >/dev/null 2>&1
+log "pairing window open for ${secs}s"
+
+is_controller() {
+	info=$(bluetoothctl info "$1" 2>/dev/null)
+	case $info in *"Icon: input-gaming"*|*"Icon: input-joystick"*) return 0 ;; esac
+	# Some pads advertise no icon: fall back to the name.
+	name=$(printf '%s\n' "$info" | sed -n 's/^[[:space:]]*Name: //p' | tr 'A-Z' 'a-z')
+	case $name in
+		*controller*|*gamepad*|*joy-con*|*joycon*|*"pro controller"*|*8bitdo*| \
+		*xbox*|*dualshock*|*dualsense*|*"wireless controller"*|*joystick*|*gamesir*) return 0 ;;
+	esac
+	return 1
+}
+
+bluetoothctl --timeout "$secs" scan on >/dev/null 2>&1 &
+end=$(( $(date +%s) + secs ))
+: > "$TRIED"
+while [ "$(date +%s)" -lt "$end" ]; do
+	for mac in $(bluetoothctl devices 2>/dev/null | awk '$1 == "Device" {print $2}'); do
+		grep -q "$mac" "$TRIED" && continue
+		bluetoothctl info "$mac" 2>/dev/null | grep -q 'Paired: yes' && continue
+		is_controller "$mac" || continue
+		echo "$mac" >> "$TRIED"
+		name=$(bluetoothctl info "$mac" | sed -n 's/^[[:space:]]*Name: //p')
+		if bluetoothctl --agent NoInputNoOutput --timeout 25 pair "$mac" 2>&1 | grep -q -i 'pairing successful'; then
+			bluetoothctl trust "$mac" >/dev/null 2>&1
+			bluetoothctl --timeout 10 connect "$mac" >/dev/null 2>&1
+			log "paired $name ($mac)"
+		else
+			log "pairing failed: $name ($mac)"
+		fi
+	done
+	sleep 2
+done
+log "pairing window closed"

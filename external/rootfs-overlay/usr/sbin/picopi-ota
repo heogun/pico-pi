@@ -1,0 +1,186 @@
+#!/bin/sh
+# PICO-PI OTA updates: A/B system slots, signed bundles, automatic rollback.
+#
+#   picopi-ota status              print state (key=value)
+#   picopi-ota verify FILE         check signature, board and payload hashes
+#   picopi-ota apply FILE          verify, write the inactive slot, switch to it
+#   picopi-ota check               ask OTA_URL for a newer version
+#   picopi-ota download            download it to /data/ota/ (then: apply)
+#   picopi-ota boot-check          early boot: count tries of a new slot, roll back
+#   picopi-ota mark-good           the new slot works: make it permanent
+#   picopi-ota rollback            switch back to the other slot now
+#
+# Bundle (tar): manifest, manifest.sig (ECDSA P-256 over manifest),
+# cmdline.txt.in, boot.tar.gz (kernel, DTBs, overlays), rootfs.ext4.gz.
+# Switching slots rewrites one line on the boot partition: slot.txt
+# ("os_prefix=a/" or "os_prefix=b/"), read by the Pi firmware.
+#
+# Progress ($RUN/ota.status) is "<code> [args]" so the web UI and the
+# settings cart can show it in their language:
+#   verifying | checking | writing VER SLOT | kernel SLOT | ready VER
+#   valid VER | updated VER | uptodate VER | available VER | downloading VER
+#   rolledback | error CODE [args]   (CODE: nofile notupdate unsigned badsig
+#   format board corrupt nofit write bootmount bootfiles nourl unreachable
+#   badlatest download)
+. /usr/lib/pico8os/lib.sh
+load_config
+
+PUBKEY=${PUBKEY:-/etc/picopi/ota-public.pem}
+STATE=${STATE:-/state/ota}
+STATUS="$RUN/ota.status"
+LOG="$DATA/logs/ota.log"
+MAX_TRIES=3
+
+log() { mkdir -p "$DATA/logs"; echo "$(date '+%F %T') $*" >> "$LOG"; }
+progress() { mkdir -p "$RUN"; printf '%s\n' "$*" > "$STATUS"; log "$*"; }
+die() { progress "error $*"; echo "picopi-ota: error $*" >&2; [ -n "${WORK:-}" ] && rm -rf "$WORK"; exit 1; }
+
+mount_boot() {
+	mkdir -p /boot
+	mountpoint -q /boot && return 0
+	mount -t vfat -o rw,noatime,flush "$(disk_prefix)1" /boot
+}
+umount_boot() { sync; umount /boot 2>/dev/null; }
+
+# Atomic-ish flip: write slot.txt.new, then rename over slot.txt.
+set_boot_slot() {
+	mount_boot || die bootmount
+	echo "os_prefix=$1/" > /boot/slot.txt.new && sync && mv /boot/slot.txt.new /boot/slot.txt
+	umount_boot
+}
+
+manifest_get() { sed -n "s/^$1=//p" "$2" | head -n 1; }
+
+# verify FILE -> leaves the checked manifest in $WORK/manifest
+verify() {
+	f=$1
+	[ -f "$f" ] || die nofile
+	WORK=$(mktemp -d)
+	tar -xOf "$f" manifest > "$WORK/manifest" 2>/dev/null || die notupdate
+	tar -xOf "$f" manifest.sig > "$WORK/manifest.sig" 2>/dev/null || die unsigned
+	openssl dgst -sha256 -verify "$PUBKEY" -signature "$WORK/manifest.sig" "$WORK/manifest" >/dev/null 2>&1 \
+		|| die badsig
+	[ "$(manifest_get format "$WORK/manifest")" = 1 ] || die format
+	b=$(manifest_get board "$WORK/manifest")
+	[ "$b" = "$(os_board)" ] || die board "$b" "$(os_board)"
+	progress checking
+	for part in rootfs boot cmdline; do
+		case $part in rootfs) m=rootfs.ext4.gz ;; boot) m=boot.tar.gz ;; cmdline) m=cmdline.txt.in ;; esac
+		want=$(manifest_get "${part}_sha256" "$WORK/manifest")
+		got=$(tar -xOf "$f" "$m" | sha256sum | cut -d' ' -f1)
+		[ -n "$want" ] && [ "$want" = "$got" ] || die corrupt "$m"
+	done
+	size=$(manifest_get rootfs_size "$WORK/manifest")
+	target=$(slot_part "$(other_slot "$(current_slot)")")
+	psize=$(( $(cat "/sys/class/block/${target#/dev/}/size" 2>/dev/null || echo 0) * 512 ))
+	[ "$size" -le "$psize" ] || die nofit
+}
+
+apply() {
+	f=$1
+	progress verifying
+	verify "$f"
+	ver=$(manifest_get version "$WORK/manifest")
+	cur=$(current_slot); new=$(other_slot "$cur"); part=$(slot_part "$new")
+	progress writing "$ver" "$new"
+	tar -xOf "$f" rootfs.ext4.gz | gzip -dc | dd of="$part" bs=1M conv=fsync 2>/dev/null \
+		|| die write "$part"
+	progress kernel "$new"
+	mount_boot || die bootmount
+	rm -rf "/boot/$new.new" && mkdir -p "/boot/$new.new"
+	tar -xOf "$f" boot.tar.gz | tar -xzf - -C "/boot/$new.new" || { umount_boot; die bootfiles; }
+	tar -xOf "$f" cmdline.txt.in | sed -e "s#@ROOT@#$part#" -e "s#@SLOT@#$new#" > "/boot/$new.new/cmdline.txt"
+	sync
+	rm -rf "/boot/$new" && mv "/boot/$new.new" "/boot/$new"
+	umount_boot
+	mkdir -p "$STATE"
+	printf 'slot=%s\nprevious=%s\nversion=%s\ntries=0\n' "$new" "$cur" "$ver" > "$STATE/pending"
+	sync
+	set_boot_slot "$new"
+	rm -rf "$WORK"
+	progress ready "$ver"
+}
+
+boot_check() {
+	[ -f "$STATE/pending" ] || return 0
+	slot=$(manifest_get slot "$STATE/pending")
+	prev=$(manifest_get previous "$STATE/pending")
+	tries=$(manifest_get tries "$STATE/pending")
+	if [ "$(current_slot)" != "$slot" ]; then
+		# Firmware booted the old slot (manual revert): forget the update.
+		log "pending slot $slot not running; dropping update"
+		rm -f "$STATE/pending"; sync; return 0
+	fi
+	tries=$((tries + 1))
+	if [ "$tries" -gt "$MAX_TRIES" ]; then
+		log "slot $slot failed $MAX_TRIES boots: rolling back to $prev"
+		rm -f "$STATE/pending"; sync
+		set_boot_slot "$prev"
+		reboot; return 0
+	fi
+	# Rewrite + rename: a power cut never leaves a half-written counter.
+	printf 'slot=%s\nprevious=%s\nversion=%s\ntries=%s\n' "$slot" "$prev" \
+		"$(manifest_get version "$STATE/pending")" "$tries" > "$STATE/pending.new"
+	sync; mv "$STATE/pending.new" "$STATE/pending"; sync
+	log "booting new slot $slot (try $tries/$MAX_TRIES)"
+}
+
+mark_good() {
+	[ -f "$STATE/pending" ] || return 0
+	ver=$(manifest_get version "$STATE/pending")
+	rm -f "$STATE/pending"; sync
+	progress updated "$ver"
+}
+
+# OTA_URL/<board>/latest.txt:  version=...  url=...  (url may be relative)
+check() {
+	[ -n "$OTA_URL" ] || die nourl
+	mkdir -p "$RUN"
+	wget -q -O "$RUN/latest.txt" "${OTA_URL%/}/$(os_board)/latest.txt" || die unreachable
+	v=$(manifest_get version "$RUN/latest.txt")
+	[ -n "$v" ] || die badlatest
+	if [ "$v" \> "$(os_version)" ]; then
+		echo "$v" > "$RUN/ota.available"; progress available "$v"
+	else
+		rm -f "$RUN/ota.available"; progress uptodate "$(os_version)"
+	fi
+}
+
+download() {
+	check
+	[ -f "$RUN/ota.available" ] || return 0
+	u=$(manifest_get url "$RUN/latest.txt")
+	case $u in http://*|https://*) ;; *) u="${OTA_URL%/}/$(os_board)/$u" ;; esac
+	mkdir -p "$DATA/ota"
+	progress downloading "$(cat "$RUN/ota.available")"
+	wget -q -O "$DATA/ota/download.picopi-update.part" "$u" || die download
+	mv "$DATA/ota/download.picopi-update.part" "$DATA/ota/download.picopi-update"
+	sync
+	echo "$DATA/ota/download.picopi-update"
+}
+
+status() {
+	echo "version=$(os_version)"
+	echo "board=$(os_board)"
+	echo "slot=$(current_slot)"
+	[ -f "$STATE/pending" ] && echo "pending=$(manifest_get version "$STATE/pending")"
+	[ -f "$RUN/ota.available" ] && echo "available=$(cat "$RUN/ota.available")"
+	[ -f "$STATUS" ] && echo "progress=$(cat "$STATUS")"
+	return 0
+}
+
+case ${1:-} in
+	status) status ;;
+	verify)
+		progress verifying; verify "${2:?file}"
+		v=$(manifest_get version "$WORK/manifest"); rm -rf "$WORK"; progress valid "$v" ;;
+	apply) apply "${2:?file}" ;;
+	check) check ;;
+	download) download ;;
+	boot-check) boot_check ;;
+	mark-good) mark_good ;;
+	rollback)
+		set_boot_slot "$(other_slot "$(current_slot)")"; rm -f "$STATE/pending"; sync
+		progress rolledback ;;
+	*) sed -n '2,13s/^# \{0,1\}//p' "$0"; exit 2 ;;
+esac

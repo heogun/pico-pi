@@ -1,0 +1,14 @@
+#!/bin/sh
+# Bluetooth policy from pico8os.txt: BLUETOOTH=off powers the radio down;
+# otherwise open a pairing window for BT_PAIR_SECONDS after boot.
+[ "$1" = start ] || exit 0
+command -v bluetoothctl >/dev/null || exit 0
+. /usr/lib/pico8os/lib.sh
+load_config
+if [ "$BLUETOOTH" = off ]; then
+	(sleep 3; bluetoothctl power off >/dev/null 2>&1) &
+	exit 0
+fi
+case $BT_PAIR_SECONDS in ''|*[!0-9]*) BT_PAIR_SECONDS=60 ;; esac
+[ "$BT_PAIR_SECONDS" -gt 0 ] && pico8-btpair "$BT_PAIR_SECONDS" >/dev/null 2>&1 &
+exit 0

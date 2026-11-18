@@ -1,0 +1,161 @@
+#!/bin/sh
+# Runs on tty1 (respawned by init): install if needed, launch PICO-8,
+# then apply EXIT_ACTION from /data/pico8os.txt.
+. /usr/lib/pico8os/lib.sh
+
+LOG=/tmp/pico8.log
+FAILS=/tmp/pico8.fastfail
+
+# If PICO-8 was killed (hotkey, crash) SDL could not give the console back:
+# un-mute the VT keyboard and leave graphics mode before anything else.
+reset_vt() { pico8-hotkey --reset-vt /dev/tty1 2>/dev/null; }
+
+drop_to_shell() { reset_vt; exec /sbin/getty -L tty1 0 vt100; }
+
+pick_binary() {
+	case $(uname -m) in
+		aarch64|arm64) list="pico8_64" ;;
+		*) list="pico8_dyn pico8" ;;
+	esac
+	for b in $list; do
+		[ -x "$PICO8_DIR/$b" ] && { echo "$b"; return 0; }
+	done
+	return 1
+}
+
+# Console keymap. SDL2's evdev keyboard translates keys through the kernel
+# keymap of the VT it runs on, so this is what PICO-8 types with. Keymaps are
+# global for all VTs, so loading it once per session is enough.
+setup_keymap() {
+	[ -n "$KEYMAP" ] || KEYMAP=us
+	if ! loadkeys -q "$KEYMAP" >/dev/null 2>&1; then
+		say "Unknown KEYMAP '$KEYMAP' in pico8os.txt, using us." >>"$LOG"
+		loadkeys -q us >/dev/null 2>&1
+	fi
+}
+
+setup_video() {
+	export SDL_VIDEODRIVER="$VIDEO_DRIVER"
+	# KMS drivers are modules loaded by udev; give them a moment.
+	i=0
+	while [ $i -lt 50 ] && ! ls /sys/class/drm/card*-* >/dev/null 2>&1; do
+		sleep 0.1; i=$((i + 1))
+	done
+	# No GPU (QEMU virtio-gpu without virgl, simpledrm): use Mesa software GL.
+	for d in /sys/class/drm/card*/device/driver; do
+		[ -e "$d" ] || continue
+		case $(basename "$(readlink "$d")") in
+			virtio*|simpledrm|simple-framebuffer) export LIBGL_ALWAYS_SOFTWARE=1 ;;
+		esac
+	done
+	# Statically linked builds: make their built-in SDL hand over to the
+	# system SDL2, which has the kmsdrm backend.
+	case $1 in
+		*_dyn) ;;
+		*) for l in /usr/lib/libSDL2-2.0.so.0 /usr/lib64/libSDL2-2.0.so.0; do
+			[ -e "$l" ] && { export SDL_DYNAMIC_API="$l"; break; }
+		   done ;;
+	esac
+}
+
+# Controller mappings: SDL_GameControllerDB from the image. PICO-8 itself
+# also reads custom ones from /data/pico8/sdl_controllers.txt.
+setup_controllers() {
+	db=/usr/share/sdl/gamecontrollerdb.txt
+	[ -r "$db" ] && export SDL_GAMECONTROLLERCONFIG_FILE="$db"
+}
+
+setup_audio() {
+	case $AUDIO_CARD in
+		none) export SDL_AUDIODRIVER=dummy; return ;;
+		auto) ;;
+		*) export SDL_AUDIODRIVER=alsa ALSA_CARD="$AUDIO_CARD"; return ;;
+	esac
+	cards=$(grep -E '^ *[0-9]+ \[' /proc/asound/cards 2>/dev/null)
+	if [ -z "$cards" ]; then
+		export SDL_AUDIODRIVER=dummy; return
+	fi
+	idx=$(printf '%s\n' "$cards" | grep -i hdmi | head -n 1 | awk '{print $1}')
+	[ -n "$idx" ] || idx=$(printf '%s\n' "$cards" | head -n 1 | awk '{print $1}')
+	export SDL_AUDIODRIVER=alsa ALSA_CARD="$idx"
+	amixer -q -c "$idx" sset PCM 90% unmute 2>/dev/null
+}
+
+# Keep evidence of a bad exit on the data partition (survives reboot).
+save_log() {
+	mkdir -p "$DATA/logs"
+	{
+		echo "=== $(date '+%F %T') $bin exited with code $rc after ${ran}s"
+		tail -n 50 "$LOG"
+	} >> "$DATA/logs/pico8.log"
+	sync
+}
+
+load_config
+/usr/bin/pico8-install || { sleep 5; exit 1; }
+
+if ! bin=$(pick_binary); then
+	say "No PICO-8 binary for $(uname -m) in $PICO8_DIR."
+	say "Pi 5 images need pico8_64 (PICO-8 0.2.4 or newer)."
+	sleep 10; drop_to_shell
+fi
+
+mkdir -p "$DATA/carts" "$DATA/screenshots" "$DATA/pico8"
+setup_keymap
+setup_video "$bin"
+setup_controllers
+setup_audio
+export HOME="$DATA"
+
+set -- -home "$DATA/pico8" -root_path "$DATA/carts" -desktop "$DATA/screenshots"
+# One-shot: open the PICO-PI settings cart (hotkey, web UI) instead.
+next=$(cat "$RUN/next-cart" 2>/dev/null); rm -f "$RUN/next-cart"
+SETTINGS_CART="$DATA/carts/picopi/picopi.p8"
+if [ "$next" = settings ] && [ -f "$SETTINGS_CART" ]; then
+	PICO8_MODE=settings
+	set -- "$@" -run "$SETTINGS_CART"
+fi
+case $PICO8_MODE in
+	splore) set -- "$@" -splore ;;
+	run) [ -n "$PICO8_CART" ] && set -- "$@" -run "$DATA/carts/$PICO8_CART" ;;
+esac
+# shellcheck disable=SC2086  # PICO8_ARGS is intentionally word-split
+set -- "$@" $PICO8_ARGS
+
+clear
+cd "$PICO8_DIR" || exit 1
+started=$(date +%s)
+"$PICO8_DIR/$bin" "$@" >>"$LOG" 2>&1
+rc=$?
+ran=$(( $(date +%s) - started ))
+reset_vt
+[ "$rc" -ne 0 ] && save_log
+
+# Crash-loop guard: three quick failures in a row -> show log, open a shell.
+if [ "$ran" -lt 5 ] && [ "$rc" -ne 0 ]; then
+	n=$(( $(cat "$FAILS" 2>/dev/null || echo 0) + 1 ))
+	echo "$n" > "$FAILS"
+	if [ "$n" -ge 3 ]; then
+		rm -f "$FAILS"
+		clear
+		say "PICO-8 ($bin) keeps exiting (code $rc). Last log lines:"
+		tail -n 15 "$LOG"
+		say ""; say "Logs: $DATA/logs/   Settings: $DATA/pico8os.txt"
+		sleep 15
+		drop_to_shell
+	fi
+	sleep 1
+	exit "$rc"
+fi
+rm -f "$FAILS"
+
+# Killed by a signal (restart hotkey, OOM killer): always start again,
+# never apply EXIT_ACTION (that would power off on a restart request).
+[ "$rc" -gt 128 ] && exit 0
+
+sync
+case $EXIT_ACTION in
+	poweroff) poweroff; sleep 30 ;;
+	shell) drop_to_shell ;;
+	*) exit 0 ;;   # restart: init respawns this session
+esac

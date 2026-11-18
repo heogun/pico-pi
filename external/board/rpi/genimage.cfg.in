@@ -1,0 +1,76 @@
+# PICO-PI SD card layout (MBR):
+#   p1 PICOBOOT  FAT    firmware + slot a/ and b/ (kernel, DTBs, cmdline)
+#   p2 rootfs-a  ext4   system slot A (read-only at runtime)
+#   p3 rootfs-b  ext4   system slot B (written by OTA updates)
+#   p4 extended
+#   p5 PICO8DATA FAT32  settings, carts, saves, logs (visible on a PC)
+#   p6 picostate ext4   Bluetooth pairings, OTA state
+image boot.vfat {
+	vfat {
+		label = "PICOBOOT"
+		files = {
+#BOOT_FILES#
+		}
+	}
+	size = 128M
+}
+
+image data.vfat {
+	vfat {
+		label = "PICO8DATA"
+		extraargs = "-F 32"
+		files = {
+			"datafiles/pico8os.txt",
+			"datafiles/README.txt",
+			"datafiles/carts",
+			"datafiles/screenshots",
+			"datafiles/pico8",
+			"datafiles/logs"
+		}
+	}
+	size = 512M
+}
+
+# Small ext4 partition for state that FAT cannot hold (Bluetooth pairing
+# keys live in directories named AA:BB:CC:...) plus OTA bookkeeping.
+image state.ext4 {
+	ext4 {
+		label = "picostate"
+		use-mke2fs = "true"
+	}
+	size = 16M
+}
+
+image sdcard.img {
+	hdimage {
+		align = 1M
+	}
+
+	partition boot {
+		partition-type = 0xC
+		bootable = "true"
+		image = "boot.vfat"
+	}
+
+	partition rootfs-a {
+		partition-type = 0x83
+		image = "rootfs.ext4"
+		size = 256M
+	}
+
+	partition rootfs-b {
+		partition-type = 0x83
+		size = 256M
+	}
+
+	# p4 becomes the extended partition automatically (MBR, >4 partitions)
+	partition data {
+		partition-type = 0xC
+		image = "data.vfat"
+	}
+
+	partition state {
+		partition-type = 0x83
+		image = "state.ext4"
+	}
+}

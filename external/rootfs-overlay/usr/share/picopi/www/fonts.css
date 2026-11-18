@@ -1,0 +1,15 @@
+/* Bundled fonts (Noto Sans, SIL OFL 1.1, see /fonts/OFL.txt), subset by
+   tools/gen-webfonts.py. Browsers only download a face when the page needs
+   one of its characters, so an English page loads just the Latin file.
+   The CJK order follows the page language so shared Han characters use the
+   right regional shapes. Absolute URLs: the Wi-Fi setup page is served for
+   any path (captive portal). */
+@font-face { font-family: "PicoPi Sans"; src: url("/fonts/picopi-latin.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "PicoPi KR"; src: url("/fonts/picopi-kr.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "PicoPi SC"; src: url("/fonts/picopi-sc.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "PicoPi JP"; src: url("/fonts/picopi-jp.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+
+html { --picopi-font: "PicoPi Sans", "PicoPi KR", "PicoPi SC", "PicoPi JP", system-ui, sans-serif; }
+html[lang="zh"] { --picopi-font: "PicoPi Sans", "PicoPi SC", "PicoPi JP", "PicoPi KR", system-ui, sans-serif; }
+html[lang="ja"] { --picopi-font: "PicoPi Sans", "PicoPi JP", "PicoPi SC", "PicoPi KR", system-ui, sans-serif; }
+body, button, input, select, textarea { font-family: var(--picopi-font); }

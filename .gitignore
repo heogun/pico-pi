@@ -1,0 +1,10 @@
+/buildroot/
+/output/
+/dist/
+/pico8/*.zip
+/keys/ota-private.pem
+/.cache/
+# PICO-8 is Lexaloffle's commercial software: never commit it
+/pico8/pico-8/
+.DS_Store
+__pycache__/

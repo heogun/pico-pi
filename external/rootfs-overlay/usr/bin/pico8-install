@@ -1,0 +1,51 @@
+#!/bin/sh
+# Make sure PICO-8 is installed in /opt/pico8 (on the read-only root).
+# Sources, in order: a "pico-8" folder or the newest pico-8_*_raspi.zip on the
+# PICO8DATA partition, or a zip in the root of a USB stick.
+. /usr/lib/pico8os/lib.sh
+
+install_from() {
+	mount -o remount,rw / 2>/dev/null
+	install_pico8 "$1" "$PICO8_DIR"; rc=$?
+	sync
+	mount -o remount,ro / 2>/dev/null
+	return $rc
+}
+
+src=$(find_folder) || src=$(find_zip)
+if [ -n "$src" ] && [ "$(cat "$PICO8_DIR/.source" 2>/dev/null)" != "$(source_sum "$src")" ]; then
+	say "Installing PICO-8 from $(basename "$src") ..."
+	install_from "$src" || sleep 5
+fi
+is_installed && exit 0
+
+clear
+cat <<'MSG'
+
+  ==============================================
+               P I C O - P I
+  ==============================================
+
+  PICO-8 is not installed yet.
+
+  PICO-8 is commercial software by Lexaloffle.
+  Buy it at https://www.lexaloffle.com/pico-8.php
+  and download the "Raspberry Pi" zip.
+
+  Then either:
+   * copy pico-8_x.y.z_raspi.zip (or the unzipped
+     pico-8 folder) to the SD card's PICO8DATA
+     drive and reboot, or
+   * put the zip in the root of a USB stick and
+     plug the stick in now.
+
+  Waiting for a USB stick ...
+MSG
+
+while :; do
+	if scan_usb; then
+		src=$(find_zip)
+		[ -n "$src" ] && install_from "$src" && exit 0
+	fi
+	sleep 3
+done

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PICO-PI Wi-Fi</title>
+<link rel="stylesheet" href="/fonts.css">
+<style>
+body{margin:0;background:#1d2b53;color:#fff1e8;font-size:16px;line-height:1.5}
+main{max-width:420px;margin:0 auto;padding:24px 16px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+h1{font-family:ui-monospace,monospace;letter-spacing:3px;color:#ff004d;margin:0 0 4px}
+p{color:#c2c3c7}
+select,input,button{width:100%;font-size:16px;padding:10px;margin:6px 0;border-radius:8px;border:1px solid #2a3a6a;background:#000;color:#fff1e8;box-sizing:border-box}
+#langsel{width:auto;margin:0}
+button{background:#ff004d;border:0;font-weight:600;cursor:pointer}
+#msg{margin-top:12px;min-height:1.5em}
+</style>
+</head>
+<body>
+<main>
+<div class="top"><h1>PICO-PI</h1><select id="langsel"></select></div>
+<p data-i18n="setup_intro"></p>
+<select id="sel"><option value="" data-i18n="setup_searching"></option></select>
+<input id="ssid" data-i18n-ph="ph_ssid" autocapitalize="off" autocorrect="off">
+<input id="psk" type="password" data-i18n-ph="ph_psk">
+<input id="country" data-i18n-ph="ph_country" maxlength="2">
+<button onclick="save()" data-i18n="setup_save"></button>
+<div id="msg"></div>
+<p style="font-size:13px" data-i18n="setup_after"></p>
+</main>
+<script src="/i18n.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const COUNTRY={en:'US',ko:'KR',zh:'CN',ja:'JP',fr:'FR',es:'ES',ru:'RU',it:'IT',de:'DE'};
+let nets=null;
+function render(){
+  document.title=t('setup_title');
+  if(!$('country').value)$('country').value=COUNTRY[LANG]||'';
+  if(nets===null)return;
+  $('sel').innerHTML='';
+  const first=document.createElement('option');first.value='';
+  first.textContent=nets.length?t('sel_net'):t('setup_none');$('sel').appendChild(first);
+  for(const n of nets){const o=document.createElement('option');o.textContent=n;$('sel').appendChild(o)}
+}
+$('langsel').innerHTML=langSelect();
+$('langsel').onchange=e=>{applyLang(e.target.value);render()};
+applyLang(pickLang());render();
+fetch('/cgi-bin/api?a=status').then(r=>r.json()).then(s=>{const l=pickLang(s.lang);if(l!==LANG){applyLang(l);render()}}).catch(()=>{});
+fetch('/cgi-bin/api?a=wifi_scan').then(r=>r.json()).then(l=>{nets=l;render()}).catch(()=>{nets=[];render()});
+$('sel').onchange=e=>{if(e.target.value)$('ssid').value=e.target.value};
+async function save(){
+  if(!$('ssid').value){$('msg').textContent=t('setup_need_ssid');return}
+  const body=new URLSearchParams({ssid:$('ssid').value,psk:$('psk').value,country:$('country').value}).toString();
+  const r=await fetch('/cgi-bin/api?a=wifi_set',{method:'POST',body}).then(r=>r.json()).catch(()=>({ok:false,code:'upload_failed'}));
+  $('msg').textContent=r.ok?t('setup_ok'):msgText(r);
+}
+</script>
+</body>
+</html>

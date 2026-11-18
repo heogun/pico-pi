@@ -1,0 +1,127 @@
+#!/bin/sh
+# PICO-PI agent: the bridge between the settings cart and the system.
+#
+# The cart (carts/picopi/picopi.p8) appends requests with
+#   printh("<seq> <command>", "picopi_req.txt")
+# and reads the answer from picopi_status.p8, a cart whose sprite sheet
+# holds "key=value" text, via reload(). Both live in /run/picopi/cart
+# (tmpfs, bind-mounted on carts/picopi) so polling never writes the SD card.
+#
+# Commands: refresh | set KEY VALUE | pair | wifi_scan | wifi IDX [PSK]
+#           ota_check | ota_install | restart | exit | reboot | poweroff
+# Status "msg" is "<key> <arg>": the cart translates m_<key> from its
+# language cart (lang_<code>.p8); key "ota" carries an OTA status line
+# ("<code> [args]", see picopi-ota) that the cart translates as o_<code>.
+. /usr/lib/pico8os/lib.sh
+CART_DIR="$RUN/cart"
+MNT="$DATA/carts/picopi"
+MSG=""
+SEQ=0
+
+# Text -> PICO-8 __gfx__ (each byte = two pixels, low nibble first),
+# NUL-terminated, max 8 KB.
+gfx_encode() {
+	head -c 8000 | od -An -v -tx1 | tr -s ' \n' '\n\n' | grep -v '^$' | awk '
+		{ s = s substr($1, 2, 1) substr($1, 1, 1); n++
+		  if (n == 64) { print s; s = ""; n = 0 } }
+		END { s = s "00"; while (length(s) < 128) s = s "0"; print s }'
+}
+
+write_status() {
+	load_config
+	ota=$(cat "$RUN/ota.status" 2>/dev/null)
+	[ -n "$ota" ] || ota="uptodate $(os_version)"
+	ip=$(current_ip)
+	if [ -f "$RUN/ap-mode" ]; then wifi="ap:$(cat "$RUN/ap-ssid" 2>/dev/null)"
+	elif s=$(iw dev wlan0 link 2>/dev/null | sed -n 's/^[[:space:]]*SSID: //p') && [ -n "$s" ]; then wifi="on:$s"
+	elif [ -e /sys/class/net/wlan0 ]; then wifi="off"
+	else wifi="none"
+	fi
+	{
+		echo "seq=$SEQ"
+		echo "lang=${LANGUAGE:-en}"
+		echo "ver=$(os_version)"
+		echo "slot=$(current_slot)"
+		echo "ip=${ip:--}"
+		echo "web=${ip:+http://$ip}"
+		echo "pw=$(web_password)"
+		echo "wifi=$wifi"
+		echo "nets=$(head -n 12 "$RUN/wifi-scan.txt" 2>/dev/null | tr '\n' '|')"
+		echo "bt=$(bluetoothctl devices Paired 2>/dev/null | cut -d' ' -f3- | head -n 6 | tr '\n' '|')"
+		echo "keymap=$KEYMAP"
+		echo "mode=$PICO8_MODE"
+		echo "exit=$EXIT_ACTION"
+		echo "ota=$ota"
+		echo "avail=$(cat "$RUN/ota.available" 2>/dev/null)"
+		echo "msg=$MSG"
+	} | tr -cd '\n -~' > "$CART_DIR/.status.txt"
+	{
+		printf 'pico-8 cartridge // http://www.pico-8.com\nversion 41\n__gfx__\n'
+		gfx_encode < "$CART_DIR/.status.txt"
+	} > "$CART_DIR/.picopi_status.p8" && mv "$CART_DIR/.picopi_status.p8" "$CART_DIR/picopi_status.p8"
+}
+
+handle() {
+	set -f; set -- $1; set +f
+	case $1 in ''|*[!0-9]*) return ;; esac
+	SEQ=$1; cmd=${2:-}; shift 2 2>/dev/null
+	case $cmd in
+		refresh) ;;
+		set)
+			k=$1; shift; v="$*"
+			if set_conf "$k" "$v"; then
+				MSG="saved"
+				# PICO-8 settings take effect when the settings cart exits
+				# (PICO-8 restarts then); system ones apply now.
+				case $k in WIFI_*|BLUETOOTH|HOTKEY|WEB_PASSWORD) picopi-apply "$k" ;; esac
+			else MSG="error $k"; fi ;;
+		pair) ( pico8-btpair 90 >/dev/null 2>&1 & ); MSG="pairing" ;;
+		wifi_scan) picopi-wifi scan >/dev/null 2>&1; MSG="scandone" ;;
+		wifi)
+			idx=$1; shift
+			ssid=$(sed -n "${idx}p" "$RUN/wifi-scan.txt" 2>/dev/null)
+			if [ -z "$ssid" ]; then MSG="notfound"
+			else
+				set_conf WIFI_SSID "$ssid"; set_conf WIFI_PSK "$*"
+				( picopi-wifi restart >/dev/null 2>&1 & ); MSG="connecting $ssid"
+			fi ;;
+		ota_check) picopi-ota check >/dev/null 2>&1; MSG="ota $(cat "$RUN/ota.status" 2>/dev/null)" ;;
+		ota_install)
+			( f=$(picopi-ota download 2>/dev/null) && [ -n "$f" ] && picopi-ota apply "$f" && rm -f "$f" ) >/dev/null 2>&1 &
+			MSG="downloading" ;;
+		restart|exit) restart_pico8 ;;
+		reboot) reboot ;;
+		poweroff) poweroff ;;
+		*) MSG="error $cmd" ;;
+	esac
+}
+
+setup() {
+	mkdir -p "$CART_DIR" "$MNT"
+	cp /usr/share/picopi/cart/*.p8 "$CART_DIR/"
+	mountpoint -q "$MNT" || mount --bind "$CART_DIR" "$MNT"
+	write_status
+}
+
+setup
+n=0 active=0
+while :; do
+	for req in "$CART_DIR/picopi_req.txt" "$DATA/carts/picopi_req.txt"; do
+		[ -s "$req" ] || continue
+		mv "$req" "$req.work" 2>/dev/null || continue
+		while IFS= read -r line || [ -n "$line" ]; do
+			handle "$(printf '%s' "$line" | tr -d '\r')"
+		done < "$req.work"
+		rm -f "$req.work"
+		write_status
+		active=60     # the cart is open: keep its status fresh for 30 s
+	done
+	# Refresh IP / Wi-Fi / OTA progress every 3 s, only while the cart polls
+	# (it sends "refresh" every few seconds); idle otherwise.
+	n=$((n + 1))
+	if [ "$active" -gt 0 ]; then
+		active=$((active - 1))
+		[ $((n % 6)) -eq 0 ] && write_status
+	fi
+	sleep 0.5
+done

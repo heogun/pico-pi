@@ -1,0 +1,7 @@
+#!/bin/sh
+# No RTC on a Pi: sync the clock so HTTPS (Splore) works.
+case "$1" in
+	start) ntpd -p pool.ntp.org ;;
+	stop) killall ntpd 2>/dev/null ;;
+esac
+exit 0

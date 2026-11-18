@@ -1,0 +1,72 @@
+# Same layout as the Pi images (see board/rpi/genimage.cfg.in). The boot
+# partition holds slot.txt and a/ b/ with zImage + cmdline.txt; run-qemu.sh
+# reads them to boot the active slot like the Pi firmware would.
+image boot.vfat {
+	vfat {
+		label = "PICOBOOT"
+		files = {
+#BOOT_FILES#
+		}
+	}
+	size = 64M
+}
+
+image data.vfat {
+	vfat {
+		label = "PICO8DATA"
+		extraargs = "-F 32"
+		files = {
+			"datafiles/pico8os.txt",
+			"datafiles/README.txt",
+			"datafiles/carts",
+			"datafiles/screenshots",
+			"datafiles/pico8",
+			"datafiles/logs"
+		}
+	}
+	size = 512M
+}
+
+# Small ext4 partition for state that FAT cannot hold (Bluetooth pairing
+# keys live in directories named AA:BB:CC:...) plus OTA bookkeeping.
+image state.ext4 {
+	ext4 {
+		label = "picostate"
+		use-mke2fs = "true"
+	}
+	size = 16M
+}
+
+image sdcard.img {
+	hdimage {
+		align = 1M
+	}
+
+	partition boot {
+		partition-type = 0xC
+		bootable = "true"
+		image = "boot.vfat"
+	}
+
+	partition rootfs-a {
+		partition-type = 0x83
+		image = "rootfs.ext4"
+		size = 256M
+	}
+
+	partition rootfs-b {
+		partition-type = 0x83
+		size = 256M
+	}
+
+	# p4 becomes the extended partition automatically (MBR, >4 partitions)
+	partition data {
+		partition-type = 0xC
+		image = "data.vfat"
+	}
+
+	partition state {
+		partition-type = 0x83
+		image = "state.ext4"
+	}
+}

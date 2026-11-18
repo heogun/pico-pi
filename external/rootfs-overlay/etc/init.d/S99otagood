@@ -1,0 +1,10 @@
+#!/bin/sh
+# A new system slot is "good" once the console has been up for a while with
+# the PICO-8 session running; until then S06ota counts it as a failed try.
+[ "$1" = start ] || exit 0
+[ -f /state/ota/pending ] || exit 0
+(
+	sleep 45
+	pidof pico8-session >/dev/null 2>&1 && picopi-ota mark-good
+) &
+exit 0

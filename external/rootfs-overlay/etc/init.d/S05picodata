@@ -1,0 +1,42 @@
+#!/bin/sh
+# Mount the writable partitions. Boot (p1) is never mounted and the root (p2)
+# stays read-only.
+#   p5 PICO8DATA (FAT32) -> /data   settings, carts, saves, logs
+#   p6 picostate (ext4)  -> /state  Bluetooth pairings, OTA state
+# (p2/p3 are the A/B system slots, p4 the extended partition.)
+mount_data() {
+	for dev in /dev/mmcblk0p5 /dev/vda5; do
+		[ -b "$dev" ] || continue
+		fsck.vfat -a -w "$dev" >/dev/null 2>&1
+		if mount -t vfat -o rw,noatime,flush,umask=0022 "$dev" /data; then
+			mkdir -p /data/carts /data/screenshots /data/pico8 /data/logs
+			return 0
+		fi
+	done
+	echo "S05picodata: data partition not found, using tmpfs" >&2
+	mount -t tmpfs -o size=64m tmpfs /data
+}
+
+mount_state() {
+	for dev in /dev/mmcblk0p6 /dev/vda6; do
+		[ -b "$dev" ] || continue
+		# ext4 replays its journal on mount; commit often (no power button).
+		mount -t ext4 -o rw,noatime,commit=5 "$dev" /state && break
+	done
+	mountpoint -q /state || mount -t tmpfs -o size=4m tmpfs /state
+	mkdir -p /state/bluetooth /state/ota
+	chmod 700 /state/bluetooth
+}
+
+case "$1" in
+	start)
+		mountpoint -q /data || mount_data
+		mountpoint -q /state || mount_state
+		;;
+	stop)
+		sync
+		umount /data 2>/dev/null
+		umount /state 2>/dev/null
+		;;
+esac
+exit 0

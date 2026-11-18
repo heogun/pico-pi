@@ -1,0 +1,8 @@
+#!/bin/sh
+# Wi-Fi client or first-setup access point (see picopi-wifi). Runs in the
+# background so it never delays PICO-8 starting.
+case "$1" in
+	start) picopi-wifi start >/dev/null 2>&1 & ;;
+	stop) picopi-wifi stop >/dev/null 2>&1 ;;
+esac
+exit 0

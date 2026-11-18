@@ -1,0 +1,15 @@
+#!/bin/sh
+# Force-restart hotkey for a frozen PICO-8 (see pico8-hotkey). HOTKEY=off in
+# pico8os.txt disables it.
+case "$1" in
+	start)
+		. /usr/lib/pico8os/lib.sh
+		load_config
+		[ "$HOTKEY" = off ] && exit 0
+		command -v pico8-hotkey >/dev/null && pico8-hotkey
+		;;
+	stop)
+		killall pico8-hotkey 2>/dev/null
+		;;
+esac
+exit 0

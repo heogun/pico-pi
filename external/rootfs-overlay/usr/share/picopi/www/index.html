@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PICO-PI</title>
+<link rel="stylesheet" href="/fonts.css">
+<style>
+:root{--bg:#1d2b53;--panel:#0f1830;--fg:#fff1e8;--dim:#c2c3c7;--acc:#ff004d;--ok:#00e436;--warn:#ffa300;--line:#2a3a6a}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font-size:15px;line-height:1.5}
+header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;background:var(--panel);border-bottom:2px solid var(--acc)}
+header b{font-family:ui-monospace,monospace;letter-spacing:2px;font-size:18px}
+header span{color:var(--dim);font-size:13px}
+nav{display:flex;flex-wrap:wrap;gap:4px;padding:8px 16px;background:var(--panel)}
+nav button{background:none;border:1px solid var(--line);color:var(--dim);padding:6px 12px;border-radius:6px;cursor:pointer}
+nav button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+main{max-width:860px;margin:0 auto;padding:16px}
+section{display:none}section.on{display:block}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+h2{margin:0 0 10px;font-size:16px}
+table{width:100%;border-collapse:collapse}td{padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:middle}
+td:first-child{color:var(--dim);width:40%}
+button.b,label.b{display:inline-block;background:var(--acc);color:#fff;border:0;border-radius:6px;padding:7px 14px;cursor:pointer;font-size:14px;margin:2px}
+button.g{background:#29adff}button.s{background:#5f574f}
+input[type=text],input[type=password],select,textarea{width:100%;background:#000;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px}
+textarea{min-height:360px;font-family:ui-monospace,monospace;font-size:13px}
+pre{background:#000;padding:10px;border-radius:6px;overflow:auto;max-height:420px;font-size:12px;white-space:pre-wrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.grid figure{margin:0;background:#000;border-radius:6px;padding:6px;text-align:center;font-size:12px;word-break:break-all}
+.grid img{width:100%;image-rendering:pixelated}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#000;border:1px solid var(--acc);padding:8px 16px;border-radius:8px;display:none;max-width:90%}
+.drop{border:2px dashed var(--line);border-radius:10px;padding:18px;text-align:center;color:var(--dim)}
+.drop.over{border-color:var(--acc);color:var(--fg)}
+progress{width:100%}
+.muted{color:var(--dim);font-size:13px}
+</style>
+</head>
+<body>
+<header><b>PICO-PI</b><span id="hdr">…</span><select id="langsel" style="margin-left:auto;width:auto"></select></header>
+<nav id="nav">
+  <button data-t="home" class="on" data-i18n="nav_home"></button>
+  <button data-t="carts" data-i18n="nav_carts"></button>
+  <button data-t="shots" data-i18n="nav_shots"></button>
+  <button data-t="settings" data-i18n="nav_settings"></button>
+  <button data-t="net" data-i18n="nav_net"></button>
+  <button data-t="update" data-i18n="nav_update"></button>
+  <button data-t="logs" data-i18n="nav_logs"></button>
+</nav>
+<main>
+<section id="home" class="on">
+  <div class="card"><h2 data-i18n="h_console"></h2><table id="st"></table></div>
+  <div class="card"><h2 data-i18n="h_controls"></h2>
+    <button class="b" onclick="power('restart')" data-i18n="btn_restart"></button>
+    <button class="b g" onclick="power('settings')" data-i18n="btn_settings"></button>
+    <button class="b s" onclick="power('reboot')" data-i18n="btn_reboot"></button>
+    <button class="b s" onclick="power('poweroff')" data-i18n="btn_poweroff"></button>
+  </div>
+  <div class="card"><h2 data-i18n="h_pico8"></h2>
+    <p class="muted" data-i18n="p_pico8"></p>
+    <label class="b"><span data-i18n="btn_zip"></span><input type="file" accept=".zip" hidden onchange="upPico8(this)"></label>
+    <progress id="p8prog" value="0" max="1" hidden></progress>
+  </div>
+</section>
+
+<section id="carts">
+  <div class="card"><h2 data-i18n="h_cart_up"></h2>
+    <div class="drop" id="cartdrop"><span data-i18n="p_cart_drop"></span>
+      <label class="b"><span data-i18n="btn_file"></span><input type="file" multiple accept=".p8,.png" hidden onchange="upCarts(this.files)"></label></div>
+    <progress id="cartprog" value="0" max="1" hidden></progress>
+  </div>
+  <div class="card"><h2 data-i18n="h_cart_list"></h2><table id="cartlist"></table></div>
+</section>
+
+<section id="shots">
+  <div class="card"><h2 data-i18n="h_shots"></h2><p class="muted" data-i18n="p_shots"></p><div class="grid" id="shotgrid"></div></div>
+</section>
+
+<section id="settings">
+  <div class="card"><h2 data-i18n="h_quick"></h2><table>
+    <tr><td data-i18n="q_keymap"></td><td><select id="q_KEYMAP" onchange="setq(this)"></select></td></tr>
+    <tr><td data-i18n="q_mode"></td><td><select id="q_PICO8_MODE" onchange="setq(this)"><option>splore</option><option>editor</option><option>run</option></select></td></tr>
+    <tr><td data-i18n="q_exit"></td><td><select id="q_EXIT_ACTION" onchange="setq(this)"><option>restart</option><option>poweroff</option><option>shell</option></select></td></tr>
+    <tr><td data-i18n="q_bt"></td><td><select id="q_BLUETOOTH" onchange="setq(this)"><option>on</option><option>off</option></select></td></tr>
+    <tr><td data-i18n="q_hotkey"></td><td><select id="q_HOTKEY" onchange="setq(this)"><option>on</option><option>off</option></select></td></tr>
+    <tr><td data-i18n="q_ota"></td><td><input type="text" id="q_OTA_URL" placeholder="https://example.com/picopi" onchange="setq(this)"></td></tr>
+  </table></div>
+  <div class="card"><h2 data-i18n="h_conf"></h2>
+    <textarea id="conf" spellcheck="false"></textarea>
+    <button class="b" onclick="saveConf()" data-i18n="btn_save"></button>
+  </div>
+</section>
+
+<section id="net">
+  <div class="card"><h2 data-i18n="h_wifi"></h2><table id="wifist"></table>
+    <p><select id="ssidsel"></select></p>
+    <p><input type="text" id="ssid" data-i18n-ph="ph_ssid"></p>
+    <p><input type="password" id="psk" data-i18n-ph="ph_psk"></p>
+    <button class="b" onclick="setWifi()" data-i18n="btn_connect"></button>
+    <button class="b s" onclick="scanWifi()" data-i18n="btn_rescan"></button>
+  </div>
+  <div class="card"><h2 data-i18n="h_bt"></h2>
+    <p class="muted" data-i18n="p_bt"></p>
+    <button class="b" onclick="api('bt_pair').then(r=>toast(msgText(r)))" data-i18n="btn_pair"></button>
+    <table id="btlist"></table>
+  </div>
+</section>
+
+<section id="update">
+  <div class="card"><h2 data-i18n="h_system"></h2><table id="otast"></table></div>
+  <div class="card"><h2 data-i18n="h_upd_file"></h2>
+    <p class="muted" data-i18n="p_upd_file"></p>
+    <label class="b"><span data-i18n="btn_file"></span><input type="file" accept=".picopi-update" hidden onchange="upOta(this)"></label>
+    <progress id="otaprog" value="0" max="1" hidden></progress>
+    <p><button class="b" id="otaapply" hidden onclick="otaApply()" data-i18n="btn_install"></button></p>
+  </div>
+  <div class="card"><h2 data-i18n="h_upd_online"></h2>
+    <p class="muted" data-i18n="p_upd_online"></p>
+    <button class="b g" onclick="api('ota_check').then(r=>{toast(msgText(r));status()})" data-i18n="btn_check"></button>
+    <button class="b" onclick="api('ota_download').then(r=>{toast(msgText(r));pollOta()})" data-i18n="btn_dl"></button>
+    <button class="b s" onclick="if(confirm(t('c_rollback')))api('ota_rollback').then(r=>toast(msgText(r)))" data-i18n="btn_rollback"></button>
+  </div>
+</section>
+
+<section id="logs">
+  <div class="card"><h2 data-i18n="h_logs"></h2>
+    <select id="logsel" onchange="loadLog()"><option value="pico8" data-i18n="log_pico8"></option><option value="kernel" data-i18n="log_kernel"></option><option value="ota" data-i18n="log_ota"></option><option value="bluetooth" data-i18n="log_bt"></option><option value="system" data-i18n="log_system"></option></select>
+    <pre id="logtxt"></pre>
+  </div>
+</section>
+</main>
+<div id="toast"></div>
+<script src="i18n.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',4000)}
+async function api(a,params={},opts={}){
+  const q=new URLSearchParams({a,...params});
+  const r=await fetch('/cgi-bin/api?'+q,opts);
+  const ct=r.headers.get('content-type')||'';
+  const d=ct.includes('json')?await r.json():await r.text();
+  if(!r.ok&&d&&typeof d==='object')toast(msgText(d));
+  return d;
+}
+function upload(a,params,file,bar){
+  return new Promise(res=>{
+    const x=new XMLHttpRequest();
+    x.open('POST','/cgi-bin/api?'+new URLSearchParams({a,...params}));
+    if(bar){bar.hidden=false;x.upload.onprogress=e=>{if(e.lengthComputable)bar.value=e.loaded/e.total}}
+    x.onload=()=>{if(bar)bar.hidden=true;let d;try{d=JSON.parse(x.responseText)}catch(e){d={ok:false,code:'upload_failed'}};res(d)};
+    x.onerror=()=>{if(bar)bar.hidden=true;res({ok:false,code:'upload_failed'})};
+    x.send(file);
+  });
+}
+document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>show(b.dataset.t));
+function show(tab){
+  curTab=tab;
+  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===tab));
+  document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id===tab));
+  ({home:status,carts:loadCarts,shots:loadShots,settings:loadConf,net:loadNet,update:status,logs:loadLog})[tab]();
+}
+const row=(k,v)=>`<tr><td>${esc(k)}</td><td>${v}</td></tr>`;
+async function status(){
+  const s=await api('status');
+  $('hdr').textContent=`${s.board} · ${s.version} · ${t('slot')} ${s.slot}`;
+  $('st').innerHTML=row(t('r_ip'),esc(s.ip||'-'))+row(t('r_wifi'),esc(wifiText(s.wifi)))+row(t('r_pico8'),esc(p8Text(s.pico8)))+
+    row(t('r_free'),esc(s.data_free))+row(t('r_uptime'),esc(s.uptime));
+  const o=s.ota||{};
+  $('otast').innerHTML=row(t('r_version'),esc(o.version||s.version))+row(t('r_board'),esc(s.board))+row(t('r_slot'),esc(o.slot||s.slot))+
+    (o.pending?row(t('r_pending'),esc(o.pending)+' <span class="muted">'+esc(t('r_pending_note'))+'</span>'):'')+
+    (o.available?row(t('r_new'),esc(o.available)):'')+(o.progress?row(t('r_progress'),esc(otaText(o.progress))):'');
+  return s;
+}
+async function loadCarts(){
+  const l=await api('carts');
+  $('cartlist').innerHTML=l.length?l.map(c=>`<tr><td>${esc(c.name)}</td><td>${(c.size/1024).toFixed(1)} KB
+    <button class="b s" onclick="delCart('${encodeURIComponent(c.name)}')">${t('btn_delete')}</button></td></tr>`).join(''):`<tr><td>${t('no_carts')}</td><td></td></tr>`;
+}
+async function delCart(n){n=decodeURIComponent(n);if(!confirm(t('c_delete',n)))return;toast(msgText(await api('cart_del',{name:n})));loadCarts()}
+async function upCarts(files){
+  for(const f of files){const r=await upload('cart_put',{name:f.name},f,$('cartprog'));toast(msgText(r))}
+  loadCarts();
+}
+const drop=$('cartdrop');
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('over')};
+drop.ondragleave=()=>drop.classList.remove('over');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');upCarts(e.dataTransfer.files)};
+async function loadShots(){
+  const l=await api('shots');
+  $('shotgrid').innerHTML=l.length?l.map(n=>`<figure><a href="/shots/${encodeURIComponent(n)}" download><img src="/shots/${encodeURIComponent(n)}" loading="lazy"></a>${esc(n)}
+    <br><button class="b s" onclick="delShot('${encodeURIComponent(n)}')">${t('btn_delete')}</button></figure>`).join(''):`<p class="muted">${t('none_yet')}</p>`;
+}
+async function delShot(n){n=decodeURIComponent(n);if(!confirm(t('c_delete',n)))return;await api('shot_del',{name:n});loadShots()}
+const KEYMAPS=['us','uk','de','de-latin1','fr','fr-latin1','es','it','se-latin1','no','dk','fi','pt-latin1','br-abnt2','ch-de_nodeadkeys','jp106','dvorak'];
+async function loadConf(){
+  const t=await api('conf_get');$('conf').value=t;
+  const get=k=>{const m=t.match(new RegExp('^\\s*'+k+'\\s*=\\s*"?([^"#\\r\\n]*)','m'));return m?m[1].trim():''};
+  const km=$('q_KEYMAP');km.innerHTML=KEYMAPS.map(k=>`<option>${k}</option>`).join('');
+  for(const id of ['KEYMAP','PICO8_MODE','EXIT_ACTION','BLUETOOTH','HOTKEY','OTA_URL']){const v=get(id);if(v)$('q_'+id).value=v}
+}
+async function setq(el){const r=await api('set',{k:el.id.slice(2),v:el.value});toast(msgText(r))}
+async function saveConf(){const r=await upload('conf_put',{},$('conf').value);toast(msgText(r))}
+async function loadNet(){
+  const s=await status();
+  $('wifist').innerHTML=row(t('r_state'),esc(wifiText(s.wifi)))+row(t('r_ip'),esc(s.ip||'-'));
+  scanWifi();
+  const bt=await api('bt_list');
+  $('btlist').innerHTML=bt.map(l=>{const[m,n]=l.split('\t');return `<tr><td>${esc(n||m)}</td><td>${esc(m)}
+    <button class="b s" onclick="btRemove('${m}')">${t('btn_delete')}</button></td></tr>`}).join('')||`<tr><td>${t('no_pads')}</td><td></td></tr>`;
+}
+async function btRemove(m){await api('bt_remove',{mac:m});loadNet()}
+async function scanWifi(){
+  const l=await api('wifi_scan');
+  $('ssidsel').innerHTML=`<option value="">${t('sel_net')}</option>`+l.map(n=>`<option>${esc(n)}</option>`).join('');
+  $('ssidsel').onchange=e=>{if(e.target.value)$('ssid').value=e.target.value};
+}
+async function setWifi(){
+  const b=new URLSearchParams({ssid:$('ssid').value,psk:$('psk').value});
+  const r=await upload('wifi_set',{},b.toString());toast(msgText(r));
+}
+async function upPico8(i){const f=i.files[0];if(!f)return;const r=await upload('pico8_put',{name:f.name},f,$('p8prog'));toast(msgText(r))}
+async function upOta(i){
+  const f=i.files[0];if(!f)return;toast(t('uploading_verify'));
+  const r=await upload('ota_put',{},f,$('otaprog'));toast(msgText(r));$('otaapply').hidden=!r.ok;status();
+}
+async function otaApply(){if(!confirm(t('c_install')))return;await api('ota_apply');$('otaapply').hidden=true;pollOta()}
+function pollOta(){
+  const h=setInterval(async()=>{const s=await status();const p=(s.ota||{}).progress||'';
+    if(/^(ready|error|updated|uptodate|available)\b/.test(p)){clearInterval(h);toast(otaText(p));
+      if(p.startsWith('ready')&&confirm(t('c_reboot_now')))power('reboot')}},2000);
+}
+async function power(d){
+  if((d==='reboot'||d==='poweroff')&&!confirm(t(d==='reboot'?'c_reboot':'c_poweroff')))return;
+  toast(msgText(await api('power',{do:d})));
+}
+async function loadLog(){$('logtxt').textContent=await api('log',{f:$('logsel').value})||t('empty')}
+let curTab='home';
+$('langsel').innerHTML=langSelect();
+$('langsel').onchange=e=>{applyLang(e.target.value);api('set',{k:'LANGUAGE',v:e.target.value});show(curTab)};
+applyLang(pickLang());
+status().then(s=>{if(s&&s.lang){const l=pickLang(s.lang);if(l!==LANG){applyLang(l);show(curTab)}}});
+</script>
+</body>
+</html>

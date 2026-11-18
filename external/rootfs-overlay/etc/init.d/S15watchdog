@@ -1,0 +1,17 @@
+#!/bin/sh
+# Hardware watchdog: if the kernel locks up, the board reboots by itself
+# instead of sitting frozen. Disable with WATCHDOG=off in pico8os.txt.
+case "$1" in
+	start)
+		. /usr/lib/pico8os/lib.sh
+		load_config
+		[ "$WATCHDOG" = off ] && exit 0
+		[ -c /dev/watchdog ] || exit 0
+		watchdog -T 15 -t 5 /dev/watchdog
+		;;
+	stop)
+		# Stopping the daemon cleanly disarms the timer (magic close).
+		killall watchdog 2>/dev/null
+		;;
+esac
+exit 0

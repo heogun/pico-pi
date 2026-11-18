@@ -1,0 +1,211 @@
+#!/bin/sh
+# PICO-PI web API (busybox httpd CGI). /cgi-bin/api?a=ACTION&...
+# Uploads are raw request bodies (fetch(url, {method:'POST', body:file})),
+# so no multipart parsing is needed.
+# Replies carry a message code + argument ({"ok":..,"code":..,"arg":..});
+# the page translates api_<code> (and OTA status codes) via i18n.js.
+. /usr/lib/pico8os/lib.sh
+load_config
+
+MAX_TEXT=65536
+
+hdr() { printf 'Content-Type: %s\r\nCache-Control: no-store\r\n\r\n' "${1:-application/json}"; }
+# ok|fail CODE [ARG]
+reply() {
+	hdr
+	printf '{"ok":%s,"code":%s,"arg":%s}\n' "$1" "$(json_str "$2")" "$(json_str "${3:-}")"
+	exit 0
+}
+ok() { reply true "$1" "${2:-}"; }
+fail() { printf 'Status: 400 Bad Request\r\n'; reply false "$1" "${2:-}"; }
+# OTA results: the code is "ota", the argument the OTA status line.
+ota_reply() { "$1" ota "$(cat "$RUN/ota.status" 2>/dev/null)"; }
+
+urldecode() {
+	printf '%b' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/+/ /g' \
+		-e 's/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
+}
+# param NAME [STRING]: value of NAME in STRING (default: the query string)
+param() {
+	src=${2-$QUERY_STRING}
+	old_ifs=$IFS; IFS='&'
+	for kv in $src; do
+		case $kv in "$1="*) IFS=$old_ifs; urldecode "${kv#*=}"; return 0 ;; esac
+	done
+	IFS=$old_ifs
+	return 1
+}
+body() { head -c "${CONTENT_LENGTH:-0}"; }
+need_post() { [ "$REQUEST_METHOD" = POST ] || fail post_required; }
+
+# File names from the browser: one path component, no hidden files.
+safe_name() {
+	n=$(printf '%s' "$1" | tr -d '/\\\r\n' | tr -c 'A-Za-z0-9._ ()+-' '_')
+	case $n in ''|.*) return 1 ;; esac
+	printf '%s' "$n"
+}
+
+json_list() { # lines on stdin -> JSON array of strings
+	first=1; printf '['
+	while IFS= read -r l; do
+		[ $first = 1 ] || printf ','; first=0
+		json_str "$l"
+	done
+	printf ']'
+}
+
+pico8_version() {
+	v=$(grep -m1 -o 'PICO-8 v[0-9][0-9.a-z]*' "$PICO8_DIR/pico-8_manual.txt" 2>/dev/null)
+	if [ -n "$v" ]; then echo "${v#PICO-8 }"
+	elif is_installed; then echo "@installed"
+	else echo "@none"
+	fi
+}
+
+wifi_state() {
+	if [ -f "$RUN/ap-mode" ]; then echo "ap:$(cat "$RUN/ap-ssid" 2>/dev/null)"
+	elif s=$(iw dev wlan0 link 2>/dev/null | sed -n 's/^[[:space:]]*SSID: //p') && [ -n "$s" ]; then echo "on:$s"
+	elif [ -e /sys/class/net/wlan0 ]; then echo "off"
+	else echo "none"
+	fi
+}
+
+AP_ONLY="status wifi_scan wifi_set"
+action=$(param a) || action=status
+if [ -f "$RUN/ap-mode" ]; then
+	case " $AP_ONLY " in *" $action "*) ;; *) fail ap_only ;; esac
+fi
+
+case $action in
+status)
+	hdr
+	printf '{"lang":%s,' "$(json_str "${LANGUAGE:-en}")"
+	printf '"version":%s,"board":%s,"slot":%s,"ip":%s,"wifi":%s,"ap":%s,' \
+		"$(json_str "$(os_version)")" "$(json_str "$(os_board)")" "$(json_str "$(current_slot)")" \
+		"$(json_str "$(current_ip)")" "$(json_str "$(wifi_state)")" \
+		"$([ -f "$RUN/ap-mode" ] && echo true || echo false)"
+	printf '"pico8":%s,"uptime":%s,"data_free":%s,' \
+		"$(json_str "$(pico8_version)")" "$(json_str "$(uptime | sed 's/^.*up *//; s/, *load.*//')")" \
+		"$(json_str "$(df -h "$DATA" 2>/dev/null | awk 'NR==2{print $4}')")"
+	printf '"ota":{'
+	picopi-ota status 2>/dev/null | awk -F= 'NR>1{printf ","} {v=$0; sub(/^[^=]*=/,"",v); gsub(/\\/,"\\\\",v); gsub(/"/,"\\\"",v); printf "\"%s\":\"%s\"", $1, v}'
+	printf '}}\n'
+	;;
+conf_get)
+	hdr text/plain; cat "$DATA/pico8os.txt" 2>/dev/null ;;
+conf_put)
+	need_post
+	[ "${CONTENT_LENGTH:-0}" -le "$MAX_TEXT" ] || fail too_large
+	body > "$DATA/pico8os.txt.new" && mv "$DATA/pico8os.txt.new" "$DATA/pico8os.txt" && sync
+	picopi-apply >/dev/null 2>&1
+	ok saved ;;
+set)
+	k=$(param k) || fail unknown_setting; v=$(param v)
+	set_conf "$k" "$v" || fail unknown_setting "$k"
+	picopi-apply "$k" >/dev/null 2>&1
+	ok saved_key "$k" ;;
+carts)
+	hdr
+	printf '['
+	first=1
+	for f in "$DATA"/carts/*.p8 "$DATA"/carts/*.p8.png; do
+		[ -f "$f" ] || continue
+		[ $first = 1 ] || printf ','; first=0
+		printf '{"name":%s,"size":%s}' "$(json_str "$(basename "$f")")" "$(stat -c %s "$f")"
+	done
+	printf ']\n' ;;
+cart_put)
+	need_post
+	n=$(safe_name "$(param name)") || fail bad_name
+	case $n in *.p8|*.p8.png) ;; *) fail only_carts ;; esac
+	[ "${CONTENT_LENGTH:-0}" -le 1048576 ] || fail too_large
+	body > "$DATA/carts/.$n.part" && mv "$DATA/carts/.$n.part" "$DATA/carts/$n" && sync
+	ok uploaded "$n" ;;
+cart_del)
+	n=$(safe_name "$(param name)") || fail bad_name
+	rm -f "$DATA/carts/$n" && sync
+	ok deleted "$n" ;;
+shots)
+	hdr
+	ls -t "$DATA/screenshots" 2>/dev/null | grep -i -E '\.(png|gif)$' | json_list; echo ;;
+shot_del)
+	n=$(safe_name "$(param name)") || fail bad_name
+	rm -f "$DATA/screenshots/$n" && sync
+	ok deleted "$n" ;;
+log)
+	case $(param f) in
+		pico8) f=$DATA/logs/pico8.log ;; kernel) f=$DATA/logs/kernel.log ;;
+		ota) f=$DATA/logs/ota.log ;; bluetooth) f=$DATA/logs/bluetooth.log ;;
+		system) dmesg | tail -n 200 > "$RUN/dmesg.txt"; f=$RUN/dmesg.txt ;;
+		*) fail unknown_log ;;
+	esac
+	hdr text/plain; tail -n 200 "$f" 2>/dev/null ;;
+pico8_put)
+	need_post
+	n=$(safe_name "$(param name)") || fail bad_name
+	case $n in pico-8*raspi*.zip) ;; *) fail expect_zip ;; esac
+	body > "$DATA/.$n.part" && mv "$DATA/.$n.part" "$DATA/$n" && sync
+	restart_pico8   # the session installs it on start
+	ok zip_installing "$n" ;;
+bt_list)
+	hdr
+	bluetoothctl devices Paired 2>/dev/null | awk '$1=="Device"{m=$2; $1=""; $2=""; sub(/^  /,""); print m "\t" $0}' | json_list; echo ;;
+bt_pair)
+	( pico8-btpair 90 >/dev/null 2>&1 & )
+	ok pairing ;;
+bt_remove)
+	mac=$(param mac | tr -cd '0-9A-Fa-f:')
+	[ ${#mac} -eq 17 ] || fail bad_address
+	bluetoothctl remove "$mac" >/dev/null 2>&1
+	ok removed "$mac" ;;
+wifi_scan)
+	hdr
+	picopi-wifi scan 2>/dev/null | json_list; echo ;;
+wifi_set)
+	need_post
+	[ "${CONTENT_LENGTH:-0}" -le 4096 ] || fail too_large
+	b=$(body)
+	ssid=$(param ssid "$b") || fail ssid_missing
+	psk=$(param psk "$b"); country=$(param country "$b")
+	[ -z "$ssid" ] && fail ssid_missing
+	[ -n "$psk" ] && { [ ${#psk} -ge 8 ] && [ ${#psk} -le 63 ] || fail psk_len; }
+	set_conf WIFI_SSID "$ssid" && set_conf WIFI_PSK "$psk" || fail quotes
+	[ -n "$country" ] && set_conf WIFI_COUNTRY "$(printf '%s' "$country" | tr -cd 'A-Za-z' | tr 'a-z' 'A-Z' | head -c 2)"
+	( sleep 2; picopi-wifi restart >/dev/null 2>&1 ) &
+	ok connecting "$ssid" ;;
+ota_put)
+	need_post
+	mkdir -p "$DATA/ota"
+	body > "$DATA/ota/upload.picopi-update.part" || fail upload_failed
+	mv "$DATA/ota/upload.picopi-update.part" "$DATA/ota/upload.picopi-update"; sync
+	if picopi-ota verify "$DATA/ota/upload.picopi-update" >/dev/null 2>&1; then
+		ota_reply ok
+	else
+		rm -f "$DATA/ota/upload.picopi-update"; ota_reply fail
+	fi ;;
+ota_apply)
+	f="$DATA/ota/upload.picopi-update"
+	[ -f "$f" ] || f="$DATA/ota/download.picopi-update"
+	[ -f "$f" ] || fail no_update
+	( picopi-ota apply "$f" >/dev/null 2>&1 && rm -f "$f" && sync ) &
+	ok installing ;;
+ota_check)
+	picopi-ota check >/dev/null 2>&1
+	ota_reply ok ;;
+ota_download)
+	( f=$(picopi-ota download 2>/dev/null) && [ -n "$f" ] && picopi-ota apply "$f" && rm -f "$f" ) >/dev/null 2>&1 &
+	ok downloading ;;
+ota_rollback)
+	picopi-ota rollback >/dev/null 2>&1
+	ota_reply ok ;;
+power)
+	case $(param do) in
+		restart) restart_pico8; ok restarting ;;
+		settings) restart_pico8 settings; ok settings ;;
+		reboot) ( sleep 1; reboot ) & ok rebooting ;;
+		poweroff) ( sleep 1; poweroff ) & ok powering_off ;;
+		*) fail unknown_action ;;
+	esac ;;
+*)
+	fail unknown_action ;;
+esac

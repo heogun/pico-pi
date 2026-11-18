@@ -1,0 +1,7 @@
+config BR2_PACKAGE_SDL_GAMECONTROLLERDB
+	bool "sdl-gamecontrollerdb"
+	help
+	  Community SDL2 game controller mappings, so controllers SDL
+	  does not know natively get the right button layout.
+
+	  https://github.com/mdqinc/SDL_GameControllerDB

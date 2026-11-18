@@ -1,0 +1,28 @@
+# PICO-PI firmware config. See https://www.raspberrypi.com/documentation/computers/config_txt.html
+
+# A/B system slots: slot.txt holds "os_prefix=a/" or "os_prefix=b/", which
+# selects the kernel, cmdline.txt, DTBs and overlays of that slot. OTA updates
+# write the inactive slot and then flip this one line.
+include slot.txt
+start_file=start4.elf
+fixup_file=fixup4.dat
+kernel=zImage
+arm_64bit=0
+
+# Fast, quiet boot
+disable_splash=1
+boot_delay=0
+disable_overscan=1
+
+# KMS display driver (required for SDL2 kmsdrm) + audio
+dtoverlay=vc4-kms-v3d
+max_framebuffers=2
+dtparam=audio=on
+
+gpu_mem_256=64
+gpu_mem_512=64
+gpu_mem_1024=64
+
+# Serial console on GPIO14/15 (serial0). Bluetooth keeps the PL011 UART,
+# which it needs to be reliable; enable_uart=1 pins the mini-UART clock.
+enable_uart=1

@@ -1,0 +1,17 @@
+# PICO-PI firmware config. See https://www.raspberrypi.com/documentation/computers/config_txt.html
+
+# A/B system slots: slot.txt holds "os_prefix=a/" or "os_prefix=b/", which
+# selects the kernel, cmdline.txt, DTBs and overlays of that slot. OTA updates
+# write the inactive slot and then flip this one line.
+include slot.txt
+kernel=Image
+
+# Fast, quiet boot
+disable_splash=1
+boot_delay=0
+disable_overscan=1
+
+# KMS display driver (required for SDL2 kmsdrm) + audio
+dtoverlay=vc4-kms-v3d
+max_framebuffers=2
+dtparam=audio=on

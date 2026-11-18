@@ -1,0 +1,55 @@
+# PICO-PI settings. Edit on any PC; changes apply when PICO-8 restarts.
+# Lines are KEY=VALUE. Quote values that contain spaces or '#'.
+
+# Language of the settings screen and the web UI:
+#   en ko zh ja fr es ru it de
+LANGUAGE=en
+
+# What to start: splore | run | editor
+PICO8_MODE=splore
+# With PICO8_MODE=run: cart file inside carts/
+PICO8_CART=
+
+# What happens when you quit PICO-8: restart | poweroff | shell
+EXIT_ACTION=restart
+
+# Keyboard layout (Linux console keymap name), e.g.
+#   us  uk  de  de-latin1  fr  fr-latin1  es  it  se-latin1  no  dk
+#   fi  pt-latin1  br-abnt2  ch-de_nodeadkeys  jp106  dvorak
+# Korean keyboards use the US layout (us).
+KEYMAP=us
+
+# Extra PICO-8 command line options, e.g. -pixel_perfect 1
+PICO8_ARGS=
+
+# auto (prefer HDMI) | none | ALSA card number or name
+AUDIO_CARD=auto
+# SDL video driver (kmsdrm is the only one built in)
+VIDEO_DRIVER=kmsdrm
+
+# Hardware watchdog: reboot automatically if the system hangs (on | off)
+WATCHDOG=on
+
+# Force-restart a frozen PICO-8 (on | off):
+#   keyboard: Ctrl + Alt + Backspace    gamepad: hold SELECT + START 3 s
+HOTKEY=on
+
+# Bluetooth controllers (on | off). Paired controllers reconnect by
+# themselves. For BT_PAIR_SECONDS after every boot (and 90 s after
+# Ctrl+Alt+P) nearby controllers in pairing mode are paired automatically:
+#   PS4/PS5: hold SHARE/CREATE + PS   Switch Pro/Joy-Con: SYNC button
+#   Xbox One/Series: hold the pair button   8BitDo: its pairing combo
+BLUETOOTH=on
+BT_PAIR_SECONDS=60
+
+# Wi-Fi for Splore (Pi Zero W, 3, 4, 5). Ethernet works without settings.
+WIFI_SSID=
+WIFI_PSK=
+WIFI_COUNTRY=KR
+
+# Web UI password (user "pico"). Empty = generated on first boot; it is shown
+# in the settings screen (Ctrl+Alt+S, or hold SELECT for 2 s).
+WEB_PASSWORD=
+
+# Online updates: <OTA_URL>/<board>/latest.txt (see README). Empty = off.
+OTA_URL=

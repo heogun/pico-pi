@@ -1,0 +1,18 @@
+#!/bin/sh
+# Keep kernel warnings that explain freezes (under-voltage, throttling, SD
+# errors, OOM, lockups) in /data/logs/kernel.log so they survive a reboot.
+[ "$1" = start ] || exit 0
+log=/data/logs/kernel.log
+mkdir -p /data/logs
+[ -f "$log" ] && mv -f "$log" "$log.1"
+(
+	while IFS= read -r line; do
+		case $line in
+			*[Uu]ndervoltage*|*[Tt]hrottl*|*"Out of memory"*|*"soft lockup"*| \
+			*"blocked for more than"*|*"I/O error"*|*mmc*error*|*mmc*timeout*| \
+			*"Call trace"*|*"BUG:"*|*"Oops"*)
+				echo "$(date '+%F %T') ${line#*;}" >> "$log" ;;
+		esac
+	done < /dev/kmsg
+) &
+exit 0
