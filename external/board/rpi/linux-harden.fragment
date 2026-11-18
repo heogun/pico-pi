@@ -1,0 +1,19 @@
+# PICO8-OS kernel hardening (Pi kernels). Each option below is unused by
+# PICO8-OS and is a known attack surface. scripts/check-kernel-trim.py checks
+# that nothing PICO8-OS needs depends on them.
+
+# /dev/mem and /dev/port: raw physical memory / IO access
+# CONFIG_DEVMEM is not set
+# CONFIG_DEVPORT is not set
+# Loading another kernel at runtime, suspend-to-disk images
+# CONFIG_KEXEC is not set
+# CONFIG_HIBERNATION is not set
+# Unprivileged user namespaces (a frequent privilege-escalation path)
+# CONFIG_USER_NS is not set
+# io_uring (large, frequently exploited syscall surface)
+# CONFIG_IO_URING is not set
+# Arbitrary binary format handlers, legacy uselib()
+# CONFIG_BINFMT_MISC is not set
+# CONFIG_USELIB is not set
+# Kernel log only for root (also kernel.dmesg_restrict in sysctl)
+CONFIG_SECURITY_DMESG_RESTRICT=y

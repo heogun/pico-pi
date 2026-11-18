@@ -9,22 +9,22 @@ mount_data() {
 		[ -b "$dev" ] || continue
 		fsck.vfat -a -w "$dev" >/dev/null 2>&1
 		# owner pico (PICO-8 saves, carts), group www (web UI), nobody else
-		if mount -t vfat -o rw,noatime,flush,uid=1000,gid=1001,fmask=0117,dmask=0007 "$dev" /data; then
+		if mount -t vfat -o rw,noatime,flush,nosuid,nodev,noexec,uid=1000,gid=1001,fmask=0117,dmask=0007 "$dev" /data; then
 			mkdir -p /data/carts /data/screenshots /data/pico8 /data/logs
 			return 0
 		fi
 	done
 	echo "S05picodata: data partition not found, using tmpfs" >&2
-	mount -t tmpfs -o size=64m,uid=1000,gid=1001,mode=0770 tmpfs /data
+	mount -t tmpfs -o size=64m,nosuid,nodev,noexec,uid=1000,gid=1001,mode=0770 tmpfs /data
 }
 
 mount_state() {
 	for dev in /dev/mmcblk0p6 /dev/vda6; do
 		[ -b "$dev" ] || continue
 		# ext4 replays its journal on mount; commit often (no power button).
-		mount -t ext4 -o rw,noatime,commit=5 "$dev" /state && break
+		mount -t ext4 -o rw,noatime,commit=5,nosuid,nodev,noexec "$dev" /state && break
 	done
-	mountpoint -q /state || mount -t tmpfs -o size=4m tmpfs /state
+	mountpoint -q /state || mount -t tmpfs -o size=4m,nosuid,nodev,noexec tmpfs /state
 	mkdir -p /state/bluetooth /state/ota
 	chmod 700 /state/bluetooth
 }

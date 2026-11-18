@@ -9,6 +9,8 @@ kernel=Image
 # Fast, quiet boot
 disable_splash=1
 boot_delay=0
+# full CPU clock for the first 60 s (kernel + PICO-8 start), then normal policy
+initial_turbo=60
 disable_overscan=1
 
 # KMS display driver (required for SDL2 kmsdrm) + audio

@@ -38,7 +38,16 @@ progress{width:100%}
 </style>
 </head>
 <body>
-<header><b>PICO8-OS</b><span id="hdr">…</span><select id="langsel" style="margin-left:auto;width:auto"></select></header>
+<header><b>PICO8-OS</b><span id="hdr">…</span><select id="langsel" style="margin-left:auto;width:auto"></select><button class="b s" id="logoutbtn" hidden onclick="logout()" data-i18n="logout"></button></header>
+<div id="login" hidden style="position:fixed;inset:0;background:var(--bg);z-index:10;display:flex;align-items:center;justify-content:center;padding:16px">
+  <form class="card" style="width:100%;max-width:360px" onsubmit="event.preventDefault();login()">
+    <h2 data-i18n="login_title"></h2>
+    <p class="muted" data-i18n="login_hint"></p>
+    <p><input type="password" id="loginpw" autocomplete="current-password" data-i18n-ph="login_pw"></p>
+    <button class="b" type="submit" data-i18n="login_btn"></button>
+    <p id="loginmsg" class="muted"></p>
+  </form>
+</div>
 <nav id="nav">
   <button data-t="home" class="on" data-i18n="nav_home"></button>
   <button data-t="carts" data-i18n="nav_carts"></button>
@@ -138,13 +147,14 @@ const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',
 function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',4000)}
 // Read-only actions are GET; everything else is POST + X-Pico8os (the
 // console rejects state changes without both: CSRF protection).
-const READ_ONLY=['status','conf_get','carts','shots','log','bt_list','wifi_scan'];
+const READ_ONLY=['status','conf_get','carts','shots','shot','log','bt_list','wifi_scan'];
 async function api(a,params={},opts={}){
   const q=new URLSearchParams({a,...params});
   if(!READ_ONLY.includes(a))opts={method:'POST',...opts,headers:{'X-Pico8os':'1',...(opts.headers||{})}};
   const r=await fetch('/cgi-bin/api?'+q,opts);
   const ct=r.headers.get('content-type')||'';
   const d=ct.includes('json')?await r.json():await r.text();
+  if(d&&d.code==='login_required'){showLogin();throw new Error('login')}
   if(!r.ok&&d&&typeof d==='object')toast(msgText(d));
   return d;
 }
@@ -194,7 +204,7 @@ drop.ondragleave=()=>drop.classList.remove('over');
 drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');upCarts(e.dataTransfer.files)};
 async function loadShots(){
   const l=await api('shots');
-  $('shotgrid').innerHTML=l.length?l.map(n=>`<figure><a href="/shots/${encodeURIComponent(n)}" download><img src="/shots/${encodeURIComponent(n)}" loading="lazy"></a>${esc(n)}
+  $('shotgrid').innerHTML=l.length?l.map(n=>`<figure><a href="/cgi-bin/api?a=shot&amp;name=${encodeURIComponent(n)}" download="${esc(n)}"><img src="/cgi-bin/api?a=shot&amp;name=${encodeURIComponent(n)}" loading="lazy"></a>${esc(n)}
     <br><button class="b s" onclick="delShot('${encodeURIComponent(n)}')">${t('btn_delete')}</button></figure>`).join(''):`<p class="muted">${t('none_yet')}</p>`;
 }
 async function delShot(n){n=decodeURIComponent(n);if(!confirm(t('c_delete',n)))return;await api('shot_del',{name:n});loadShots()}
@@ -244,8 +254,17 @@ async function loadLog(){$('logtxt').textContent=await api('log',{f:$('logsel').
 let curTab='home';
 $('langsel').innerHTML=langSelect();
 $('langsel').onchange=e=>{applyLang(e.target.value);api('set',{k:'LANGUAGE',v:e.target.value});show(curTab)};
+function showLogin(){$('login').hidden=false;$('logoutbtn').hidden=true;setTimeout(()=>$('loginpw').focus(),50)}
+async function login(){
+  const r=await upload('login',{},new URLSearchParams({pw:$('loginpw').value}).toString());
+  $('loginpw').value='';
+  if(r.ok){$('login').hidden=true;$('logoutbtn').hidden=false;$('loginmsg').textContent='';show(curTab)}
+  else $('loginmsg').textContent=msgText(r);
+}
+async function logout(){await api('logout').catch(()=>{});showLogin()}
+window.addEventListener('unhandledrejection',e=>{if(e.reason&&e.reason.message==='login')e.preventDefault()});
 applyLang(pickLang());
-status().then(s=>{if(s&&s.lang){const l=pickLang(s.lang);if(l!==LANG){applyLang(l);show(curTab)}}});
+status().then(s=>{$('logoutbtn').hidden=false;return s}).then(s=>{if(s&&s.lang){const l=pickLang(s.lang);if(l!==LANG){applyLang(l);show(curTab)}}});
 </script>
 </body>
 </html>

@@ -40,6 +40,12 @@ awk '
 # dnsmasq runs only in Wi-Fi setup (AP) mode, started by pico8os-wifi; never
 # as a system-wide DNS/DHCP service.
 rm -f "$TARGET_DIR/etc/init.d/S80dnsmasq" "$TARGET_DIR/etc/init.d/late/S80dnsmasq"
+# lighttpd runs only with PICO8-OS's own config (pico8os-web), never the
+# package's stock service and config.
+rm -f "$TARGET_DIR/etc/init.d/S50lighttpd" "$TARGET_DIR/etc/init.d/late/S50lighttpd"
+
+# tmpfs mounts: no setuid programs or device nodes (writable places only)
+sed -i -E '/^tmpfs[[:space:]]/ s/([[:space:]]tmpfs[[:space:]]+)([^[:space:]]+)/\1\2,nosuid,nodev/' "$TARGET_DIR/etc/fstab"
 
 # Signed list of known-good PICO-8 builds (see scripts/pico8-hashes.sh).
 mkdir -p "$TARGET_DIR/usr/share/pico8os"
@@ -47,8 +53,8 @@ cp "$PROJ/pico8-hashes.txt" "$PROJ/pico8-hashes.txt.sig" "$TARGET_DIR/usr/share/
 
 mkdir -p "$TARGET_DIR/data" "$TARGET_DIR/state" "$TARGET_DIR/opt" "$TARGET_DIR/var/lib" "$TARGET_DIR/boot"
 
-# Web UI serves screenshots straight from the data partition.
-ln -sfn /data/screenshots "$TARGET_DIR/usr/share/pico8os/www/shots"
+# Screenshots are served by the API (login required), not from the web root.
+rm -f "$TARGET_DIR/usr/share/pico8os/www/shots"
 
 # Bluetooth pairings must survive reboots but the root is read-only:
 # keep them on the ext4 state partition.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check external/board/rpi/linux-trim.fragment against the Raspberry Pi
+"""Check external/board/rpi/linux-*.fragment against the Raspberry Pi
 kernel's Kconfig files, by static analysis (nothing from the kernel tree is
 built or run).
 
@@ -19,7 +19,7 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FRAGMENT = os.path.join(HERE, "..", "external", "board", "rpi", "linux-trim.fragment")
+FRAGMENTS = sorted(__import__("glob").glob(os.path.join(HERE, "..", "external", "board", "rpi", "linux-*.fragment")))
 SYM = re.compile(r"\b[A-Z][A-Z0-9_]+\b")
 
 COMMON = [
@@ -119,7 +119,7 @@ def closure(deps, sym, memo):
 
 
 def main(src):
-    disabled = {l.split()[1][len("CONFIG_"):] for l in open(FRAGMENT)
+    disabled = {l.split()[1][len("CONFIG_"):] for f in FRAGMENTS for l in open(f)
                 if l.startswith("# CONFIG_") and l.rstrip().endswith("is not set")}
     bad = 0
     for label, arch, defconfig, needs in TARGETS:

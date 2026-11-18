@@ -140,7 +140,7 @@ PICO8DATA/
 ## SD카드를 빼지 않고 쓰기
 
 ### 웹 관리 페이지
-콘솔과 같은 네트워크의 브라우저에서 `http://<콘솔 IP>`로 접속합니다. 아이디는 `pico`, 비밀번호와 IP는 설정 카트의 **info** 화면에 나옵니다.
+콘솔과 같은 네트워크의 브라우저에서 `https://<콘솔 IP>`로 접속합니다(`http://`로 들어가도 HTTPS로 넘어감). 비밀번호와 IP는 설정 카트의 **info** 화면에 나옵니다. 처음 접속할 때 자체 서명 인증서 경고가 나오면 PICO8DATA의 `web-certificate.txt` 지문과 비교한 뒤 진행하세요.
 
 | 탭 | 기능 |
 |---|---|
@@ -152,7 +152,7 @@ PICO8DATA/
 | 업데이트 | 업데이트 파일 올리기 → 서명 확인 → 설치 → 재부팅, 온라인 확인/설치, 이전 시스템으로 되돌리기 |
 | 로그 | PICO-8, 커널 경고, 업데이트, 블루투스, dmesg |
 
-- busybox httpd와 셸 CGI(`/cgi-bin/api`)로 만들었습니다. 업로드는 multipart가 아니라 파일을 요청 본문 그대로 보냅니다.
+- lighttpd와 셸 CGI(`/cgi-bin/api`)로 만들었습니다. 업로드는 multipart가 아니라 파일을 요청 본문 그대로 보내고, lighttpd는 이를 메모리에 쌓지 않고 바로 CGI로 넘깁니다.
 - 이 페이지에서 고친 설정은 바로 적용됩니다. Wi-Fi 설정은 Wi-Fi를 다시 연결하고, PICO-8 관련 설정은 PICO-8을 다시 시작합니다.
 
 ### 처음 Wi-Fi 설정 (설정용 AP)
@@ -254,16 +254,19 @@ SDL이 처리하지 못하는 패드는 커널 드라이버 경로로 계속 동
 
 | 영역 | 방식 |
 |---|---|
-| 권한 분리 | PICO-8은 일반 계정 `pico`로 실행합니다(화면, 렌더, 입력, 오디오 장치만 사용 가능). 웹 서버와 CGI도 일반 계정 `www`로 실행합니다(busybox httpd `-u www`). root 권한이 필요한 동작(재부팅, Wi-Fi, 블루투스, OTA, 설정 적용)은 `pico8os-agent`(root)가 정해진 명령만 받아 처리합니다. 명령마다 인자를 검사하고, 통로는 `/run/pico8os/priv`(root:www 0730)입니다. `pico`는 `www` 그룹에 없어서, 카트는 이 통로에 접근할 수 없습니다 |
+| 권한 분리 | PICO-8은 일반 계정 `pico`로 실행합니다(화면, 렌더, 입력, 오디오 장치만 사용 가능). 웹 서버와 CGI도 일반 계정 `www`로 실행합니다(lighttpd). root 권한이 필요한 동작(재부팅, Wi-Fi, 블루투스, OTA, 설정 적용)은 `pico8os-agent`(root)가 정해진 명령만 받아 처리합니다. 명령마다 인자를 검사하고, 통로는 `/run/pico8os/priv`(root:www 0730)입니다. `pico`는 `www` 그룹에 없어서, 카트는 이 통로에 접근할 수 없습니다 |
 | 로그인 | root 비밀번호 로그인과 로그인 프롬프트(getty)가 없습니다. `DEBUG=on`일 때만 시리얼 콘솔과 tty1에 root 셸이 열립니다(`pico8os-debugsh`) |
+| 웹 HTTPS | lighttpd가 443번 포트에서 TLS 1.2 이상으로 서비스합니다. 인증서는 첫 부팅 때 콘솔에서 만든 자체 서명(P-256) 인증서이고, SHA-256 지문은 PICO8DATA의 `web-certificate.txt`에 있습니다. 처음 접속할 때 브라우저가 경고하면 이 지문과 비교하세요. 80번 포트는 HTTPS로 넘기기만 합니다(설정용 AP 모드만 예외로 HTTP). 응답마다 보안 헤더(CSP, `X-Frame-Options: DENY`, `nosniff`, `no-referrer`, HSTS)를 붙입니다 |
+| 웹 로그인 | 브라우저 기본 인증 대신 로그인 화면과 세션 쿠키를 씁니다(192비트 무작위, `HttpOnly; Secure; SameSite=Strict`, 12시간 동안 쓰지 않으면 만료). **비밀번호 대입 방지:** 한 주소에서 5번 틀리면 60초 잠기고, 더 틀릴 때마다 두 배로 늘어 최대 1시간까지 잠깁니다. 전체 주소를 합쳐 20번 틀려도 잠깁니다. 시도마다 1초씩 늦춥니다. 웹 서버(`www`)는 비밀번호 원문을 볼 수 없고, 솔트를 넣은 SHA-256만 받습니다 |
 | 웹 CSRF | 상태를 바꾸는 요청은 모두 POST에 `X-Pico8os: 1` 헤더가 있어야 받습니다. 다른 사이트는 CORS 사전 확인 없이 이 헤더를 보낼 수 없고, 이 서버는 사전 확인을 허용하지 않습니다. 브라우저가 보내는 `Origin`도 콘솔 주소와 같아야 합니다 |
 | DNS 리바인딩 | 웹 API는 `Host`가 IP 주소나 `pico8os`/`pico8os.local`일 때만 응답합니다 |
 | 설정 카트 | 카트가 보내는 요청은 시스템이 설정 카트를 띄웠을 때(단축키나 웹)만 받습니다. 웹 비밀번호가 들어 있는 상태 카트도 그때만 만듭니다. 그래서 인터넷에서 받은 카트는 설정을 바꾸거나 비밀번호를 읽을 수 없습니다. 심볼릭 링크로 된 요청 파일은 거부합니다 |
 | OTA | ECDSA P-256 서명 확인, 보드 확인, **다운그레이드 거부**, 3회 부팅 실패 시 자동 롤백 |
 | PICO-8 파일 검증 | Lexaloffle은 체크섬을 공개하지 않습니다. 그래서 이 프로젝트가 **검증된 빌드의 파일별 SHA-256 목록**(`pico8-hashes.txt`)을 OTA 키로 서명해 관리합니다. 이미지에 목록 사본이 들어 있고, 콘솔이 GitHub에서 최신 목록을 받아 서명을 확인한 뒤에만 사용합니다. 설치할 때 zip CRC(압축 해제), ELF 형식과 CPU 종류(32비트 ARM / AArch64), 버전, 파일 해시를 확인합니다. **변조되거나 손상된 파일은 항상 거부**하고, 목록에 없는 버전은 `PICO8_VERIFY`에 따라 처리합니다. 이미지에 PICO-8을 미리 넣을 때도 같은 검사를 거칩니다 |
 | 설정용 AP | WPA2(무작위 비밀번호), 30분 동안 접속한 기기가 없으면 꺼짐 |
-| 저장소 | 시스템 읽기 전용, PICO8DATA는 `pico`(소유자)와 `www`(그룹)만 접근, 그 외 계정은 읽기도 불가 |
-| 공격 표면 | 열려 있는 포트는 웹(80) 하나뿐입니다. dnsmasq는 설정용 AP일 때만 실행합니다. 커널에서 쓰지 않는 서브시스템(네트워크 필터, 원격 파일시스템, 미디어 등)은 뺐습니다 |
+| 저장소 | 시스템 읽기 전용, PICO8DATA는 `pico`(소유자)와 `www`(그룹)만 접근, 그 외 계정은 읽기도 불가. 쓰기 가능한 마운트(PICO8DATA, 상태 파티션, tmpfs)는 모두 `nosuid,nodev`이고 데이터 파티션은 `noexec`까지 걸어서, 실행 파일을 올려도 실행되지 않습니다 |
+| 커널 하드닝 | `linux-harden.fragment`: `/dev/mem`·`/dev/port`, kexec, 최대 절전, 사용자 네임스페이스, io_uring, binfmt_misc, uselib을 빼고 커널 로그를 root 전용으로 둡니다. `/etc/sysctl.d/90-pico8os.conf`: 커널 포인터 숨김, dmesg 제한, SysRq 끔, BPF 제한, 링크·FIFO 보호, setuid 코어 덤프 금지, oops 때 재부팅, ICMP 리다이렉트·소스 라우팅 거부, SYN 쿠키 등 |
+| 공격 표면 | 열려 있는 포트는 웹(443, 80은 HTTPS로 넘기기만 함)뿐입니다. dnsmasq는 설정용 AP일 때만 실행합니다. 커널에서 쓰지 않는 서브시스템(네트워크 필터, 원격 파일시스템, 미디어 등)은 뺐습니다 |
 
 **PICO-8 검증 목록에 새 버전 추가하기:** Lexaloffle에서 직접 받은 zip으로 아래처럼 실행한 뒤 `pico8-hashes.txt`와 `.sig`를 커밋합니다. 콘솔은 다음 확인 때 새 목록을 받아 씁니다.
 
@@ -277,13 +280,15 @@ scripts/pico8-hashes.sh sign
 
 **하지 않은 것:**
 - Pi 4/5의 하드웨어 보안 부팅(secure boot): 보드 OTP에 한 번 쓰면 되돌릴 수 없어서 자동으로 켜지 않습니다.
-- 웹 HTTPS, 비밀번호 대입 시도 제한, 커널 하드닝(sysctl): 다음 단계로 남겼습니다.
+- 웹 페이지의 인라인 스크립트 때문에 CSP에 `'unsafe-inline'`이 남아 있습니다. 스크립트를 별도 파일로 옮기면 뺄 수 있습니다.
+- 공인 인증서가 아닌 자체 서명 인증서라서, 처음 접속할 때 브라우저 경고가 나옵니다(가정 내 네트워크에서는 피할 수 없음).
 
 ## 부팅 속도
 
 - **2단계 부팅:** `rcS`는 S00–S20만 실행합니다(데이터 마운트, OTA 부팅 확인, udev, 워치독, 단축키). 곧바로 PICO-8을 띄우고, 나머지(네트워크, Wi-Fi, 블루투스, 웹, 시간 동기화, 상태 감시)는 `rc.late`가 **동시에** 뒤에서 시작합니다. 빌드할 때 post-build가 S21 이상을 `/etc/init.d/late/`로 옮깁니다.
 - **커널:** 쓰지 않는 서브시스템을 빼서 모듈이 절반으로 줄었습니다. 화면 드라이버 vc4와 사운드 코어는 커널에 직접 넣습니다(`linux-fastboot.fragment`). 커널 의존성 때문에 넣지 못하면 모듈로 남고, 빌드 로그에 결과가 나옵니다.
 - **측정:** 부팅마다 `logs/boot.log`에 커널 부팅 시간(init 시작 시각)과 PICO-8 시작 시각을 남깁니다(최근 50회).
+- **펌웨어와 커널 옵션:** `initial_turbo=60`(처음 60초는 최고 클럭으로 부팅), Pi 4 `arm_boost=1`, 부팅 옵션 `rootfstype=ext4`(파일시스템 종류를 추측하지 않음)를 씁니다.
 - **실행 속도:** 게임 중 CPU 정책을 `performance`로 둡니다(`CPU_GOVERNOR`). 발열이나 전원 부족 때 펌웨어가 클럭을 낮추는 것은 그대로입니다.
 
 ## 안정성 (PICOPi에서 프리징이 나던 원인과 대책)
@@ -365,6 +370,8 @@ external/                     BR2_EXTERNAL (name: PICO8OS)
 pico8-hashes.txt(.sig)        검증된 PICO-8 빌드의 파일별 SHA-256 (OTA 키로 서명, scripts/pico8-hashes.sh)
 external/board/common/users.table   계정: pico(PICO-8), www(웹)
 external/board/rpi/linux-fastboot.fragment  화면 드라이버를 커널에 직접 넣음
+external/board/rpi/linux-harden.fragment    커널 하드닝 (/dev/mem, kexec, user ns, io_uring 등 제거)
+external/rootfs-overlay/etc/sysctl.d/90-pico8os.conf  sysctl 하드닝
 tools/gen-cart-lang.py        언어 카트 생성기 (make i18n)
 tools/gen-webfonts.py         웹 글꼴 부분 집합 생성기 (make webfonts)
 tools/i18n/                   설정 카트 문구(cart-strings.json), 키릴 문자 글리프
@@ -385,6 +392,6 @@ docker/Dockerfile, scripts/   Docker 빌드, QEMU 실행
   - 웹 API: 가짜 명령으로 JSON, URL 디코딩, 경로 공격 차단, AP 모드 제한
   - 설정 카트: macOS용 PICO-8 헤드리스로 `printh`/`reload` 통신
   - 언어: 4개 언어(ko, zh, ja, ru) 설정 카트 화면을 PICO-8 헤드리스로 그려 확인, 웹 9개 언어 키 누락 검사
-  실제 Pi에서의 `os_prefix` 슬롯 전환, genimage의 확장 파티션 생성, hostapd AP, busybox httpd 업로드는 빌드와 실기기에서 확인해야 합니다.
-- 보안·부팅 1차 변경(권한 분리, CSRF, 2단계 부팅, PICO-8 검증 등)은 이 Mac에서 스크립트 단위로만 시험했습니다(웹 API 요청 규칙, 에이전트 명령 검사, PICO-8 0.2.7 실제 파일 검증, inittab 변환). 실제 Pi에서 `pico` 계정으로 PICO-8이 화면, 입력, 소리를 정상적으로 쓰는지는 빌드 후 확인해야 합니다.
+  genimage의 확장 파티션 생성은 첫 CI 빌드 이미지에서 확인했습니다. 실제 Pi에서의 `os_prefix` 슬롯 전환, hostapd AP, lighttpd(HTTPS, 큰 파일 업로드)는 실기기에서 확인해야 합니다.
+- 보안·부팅 1·2차 변경(권한 분리, CSRF, HTTPS 로그인과 대입 방지, 2단계 부팅, PICO-8 검증, 커널 하드닝 등)은 이 Mac에서 스크립트 단위로만 시험했습니다(웹 API 요청 규칙, 에이전트 명령 검사, PICO-8 0.2.7 실제 파일 검증, inittab 변환). 실제 Pi에서 `pico` 계정으로 PICO-8이 화면, 입력, 소리를 정상적으로 쓰는지는 빌드 후 확인해야 합니다.
 - 앞으로 할 일: SSH, 게임패드 매핑(`gamecontrollerdb.txt`), 부팅 스플래시, 전원 버튼(GPIO) 종료.

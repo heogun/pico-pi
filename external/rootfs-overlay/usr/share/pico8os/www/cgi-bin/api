@@ -5,10 +5,12 @@
 # Replies carry a message code + argument ({"ok":..,"code":..,"arg":..});
 # the page translates api_<code> (and OTA status codes) via i18n.js.
 #
-# Runs as the unprivileged www user (httpd -u www). It reads and writes the
-# data partition itself (group picodata); everything that needs root goes
-# through priv (lib.sh) to pico8os-agent, which only runs whitelisted
-# commands. Every state change needs POST + "X-Pico8os: 1" (CSRF).
+# Runs as the unprivileged www user (lighttpd). It reads and writes the data
+# partition itself (group www); everything that needs root goes through priv
+# (lib.sh) to pico8os-agent, which only runs whitelisted commands.
+# Every state change needs POST + "X-Pico8os: 1" (CSRF). Every action needs
+# a login session (cookie sid) except "login" itself and Wi-Fi setup (AP)
+# mode; failed logins lock the client out for growing periods.
 . /usr/lib/pico8os/lib.sh
 load_config
 
@@ -25,6 +27,38 @@ ok() { reply true "$1" "${2:-}"; }
 fail() { printf 'Status: 400 Bad Request\r\n'; reply false "$1" "${2:-}"; }
 # OTA results: the code is "ota", the argument the OTA status line.
 ota_reply() { "$1" ota "$(cat "$RUN/ota.status" 2>/dev/null)"; }
+need_login() { printf 'Status: 401 Unauthorized\r\n'; reply false login_required; }
+
+# ---- sessions and login rate limiting ----
+SESS_DIR="$RUN/sessions"; AUTH_DIR="$RUN/auth"; SESSION_TTL=43200
+now=$(date +%s)
+session_id() {
+	printf '%s' "${HTTP_COOKIE:-}" | tr ';' '\n' | sed -n 's/^ *sid=\([0-9a-f]\{48\}\)$/\1/p' | head -n 1
+}
+check_session() {
+	sid=$(session_id)
+	[ -n "$sid" ] && [ -f "$SESS_DIR/$sid" ] || return 1
+	if [ $(( now - $(stat -c %Y "$SESS_DIR/$sid") )) -ge $SESSION_TTL ]; then
+		rm -f "$SESS_DIR/$sid"; return 1
+	fi
+	touch "$SESS_DIR/$sid"
+}
+# lockout state "<failures> <locked-until>" per client address and globally
+ip_file() { printf '%s/%s' "$AUTH_DIR" "$(printf '%s' "${REMOTE_ADDR:-unknown}" | tr -c '0-9A-Fa-f' '_')"; }
+locked_for() { # FILE -> seconds still locked (0 = free)
+	set -- $(cat "$1" 2>/dev/null) 0 0
+	[ "$2" -gt "$now" ] && echo $(( $2 - now )) || echo 0
+}
+note_failure() { # FILE THRESHOLD: lock 60 s after THRESHOLD failures, doubling, max 1 h
+	set -- "$1" "$2" $(cat "$1" 2>/dev/null) 0 0
+	f=$(( $3 + 1 )) until=$4
+	if [ $f -ge "$2" ]; then
+		d=$(( 60 << (f - $2) )); [ $d -gt 3600 ] && d=3600
+		until=$(( now + d ))
+	fi
+	echo "$f $until" > "$1"
+}
+
 # priv_or_fail CMD...: run a privileged action; the request fails with it
 priv_or_fail() { priv "$@" >/dev/null 2>&1 || fail unknown_action; }
 
@@ -78,7 +112,7 @@ wifi_state() {
 }
 
 AP_ONLY="status wifi_scan wifi_set"
-READ_ONLY="status conf_get carts shots log bt_list wifi_scan"
+READ_ONLY="status conf_get carts shots shot log bt_list wifi_scan"
 action=$(param a) || action=status
 if [ -f "$RUN/ap-mode" ]; then
 	case " $AP_ONLY " in *" $action "*) ;; *) fail ap_only ;; esac
@@ -87,6 +121,7 @@ else
 	host=${HTTP_HOST%:*}
 	case $host in
 		''|localhost|pico8os|pico8os.local) ;;
+		\[*\]) ;;                       # IPv6 literal
 		*[!0-9.]*) fail bad_origin ;;   # not an IPv4 literal
 	esac
 fi
@@ -103,6 +138,37 @@ case " $READ_ONLY " in
 		fi
 		;;
 esac
+
+# Login (not in Wi-Fi setup mode, where only Wi-Fi actions exist).
+if [ ! -f "$RUN/ap-mode" ]; then
+	case $action in
+	login)
+		ipf=$(ip_file); glob="$AUTH_DIR/_all"
+		wait=$(locked_for "$ipf"); gw=$(locked_for "$glob")
+		[ "$gw" -gt "$wait" ] && wait=$gw
+		[ "$wait" -gt 0 ] && fail locked "$wait"
+		[ "${CONTENT_LENGTH:-0}" -le 1024 ] || fail too_large
+		pw=$(param pw "$(body)")
+		set -- $(cat "$RUN/web-auth" 2>/dev/null)
+		try=$(printf '%s%s' "${1:-}" "$pw" | sha256sum | cut -d' ' -f1)
+		if [ -n "${2:-}" ] && [ "$try" = "$2" ]; then
+			rm -f "$ipf"
+			sid=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
+			: > "$SESS_DIR/$sid"
+			printf 'Set-Cookie: sid=%s; Path=/; Max-Age=%s; HttpOnly; Secure; SameSite=Strict\r\n' "$sid" "$SESSION_TTL"
+			ok logged_in
+		fi
+		note_failure "$ipf" 5       # per client: 5 tries
+		note_failure "$glob" 20     # everyone together: 20 tries
+		sleep 1                     # slow down guessing
+		fail bad_password ;;
+	logout)
+		sid=$(session_id); [ -n "$sid" ] && rm -f "$SESS_DIR/$sid"
+		printf 'Set-Cookie: sid=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict\r\n'
+		ok logged_out ;;
+	esac
+	check_session || need_login
+fi
 
 case $action in
 status)
@@ -157,6 +223,13 @@ cart_del)
 shots)
 	hdr
 	ls -t "$DATA/screenshots" 2>/dev/null | grep -i -E '\.(png|gif)$' | json_list; echo ;;
+shot)
+	n=$(safe_name "$(param name)") || fail bad_name
+	f="$DATA/screenshots/$n"
+	[ -f "$f" ] || fail bad_name
+	case $n in *.png|*.PNG) t=image/png ;; *.gif|*.GIF) t=image/gif ;; *) fail bad_name ;; esac
+	printf 'Content-Type: %s\r\nCache-Control: private, max-age=3600\r\n\r\n' "$t"
+	cat "$f"; exit 0 ;;
 shot_del)
 	n=$(safe_name "$(param name)") || fail bad_name
 	rm -f "$DATA/screenshots/$n" && sync

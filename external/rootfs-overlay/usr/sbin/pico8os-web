@@ -1,32 +1,109 @@
 #!/bin/sh
-# PICO8-OS web management UI (busybox httpd on port 80, running as www).
+# PICO8-OS web management UI (lighttpd, running as www).
 #   pico8os-web start|stop|restart
-# Normal mode: everything behind HTTP basic auth (user "pico", password from
-# WEB_PASSWORD or /state/web-password, shown in the PICO8-OS settings cart).
-# Wi-Fi setup (AP) mode: no auth, but the API only allows the Wi-Fi setup
-# actions, and every unknown URL serves the setup page (captive portal).
+#
+# Normal mode: HTTPS on 443 with a self-signed certificate made on first
+# boot (/state/tls, fingerprint in PICO8DATA/web-certificate.txt); port 80
+# only redirects to HTTPS. The API needs a login (session cookie, see
+# cgi-bin/api); www never sees the password itself, only a salted SHA-256
+# ($RUN/web-auth, root:www 0640).
+# Wi-Fi setup (AP) mode: plain HTTP on 80 (phones' captive portal checks
+# need it; the AP itself is WPA2), every unknown URL shows the setup page,
+# and the API only allows the Wi-Fi setup actions.
 . /usr/lib/pico8os/lib.sh
 load_config
 WWW=/usr/share/pico8os/www
-CONF="$RUN/httpd.conf"
+CONF="$RUN/lighttpd.conf"
+TLS=/state/tls
 
-start() {
-	mkdir -p "$RUN"
-	umask 027
-	if [ -f "$RUN/ap-mode" ]; then
-		printf 'E404:%s/setup.html\n' "$WWW" > "$CONF"
-	else
-		printf '/:pico:%s\n' "$(web_password)" > "$CONF"
-	fi
-	# busybox httpd has no built-in type for web fonts
-	printf '.woff2:font/woff2\n.css:text/css\n' >> "$CONF"
+make_cert() {
+	[ -s "$TLS/server.pem" ] && return 0
+	mkdir -p "$TLS"; chmod 700 "$TLS"
+	umask 077
+	openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 \
+		-subj "/CN=pico8os" -addext "subjectAltName=DNS:pico8os,DNS:pico8os.local,IP:192.168.4.1" \
+		-keyout "$TLS/key.pem" -out "$TLS/cert.pem" >/dev/null 2>&1 || return 1
+	cat "$TLS/key.pem" "$TLS/cert.pem" > "$TLS/server.pem"
 	umask 022
-	# httpd reads its config after dropping to www: root:www 0640
-	chown root:www "$CONF"; chmod 0640 "$CONF"
-	httpd -p 80 -u www -h "$WWW" -c "$CONF" -r "PICO8-OS"
+	fp=$(openssl x509 -in "$TLS/cert.pem" -noout -fingerprint -sha256 | cut -d= -f2)
+	printf 'PICO8-OS web certificate (self-signed, made on this console)\r\nSHA-256 fingerprint:\r\n%s\r\n' "$fp" \
+		> "$DATA/web-certificate.txt"
+	sync
 }
 
-stop() { killall httpd 2>/dev/null; sleep 0.2; }
+# Salted hash of the web password for the CGI (which runs as www).
+write_auth() {
+	salt=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+	hash=$(printf '%s%s' "$salt" "$(web_password)" | sha256sum | cut -d' ' -f1)
+	umask 027
+	printf '%s %s\n' "$salt" "$hash" > "$RUN/web-auth.new"
+	chown root:www "$RUN/web-auth.new"; mv "$RUN/web-auth.new" "$RUN/web-auth"
+	# a new password logs everybody out
+	rm -rf "$RUN/sessions"; mkdir -p "$RUN/sessions" "$RUN/auth"
+	chown www:www "$RUN/sessions" "$RUN/auth"; chmod 0700 "$RUN/sessions" "$RUN/auth"
+	umask 022
+}
+
+common_conf() {
+	cat <<EOF
+server.document-root = "$WWW"
+server.username = "www"
+server.groupname = "www"
+server.tag = "PICO8-OS"
+# KB: OTA bundles are uploaded here. Stream bodies to the CGI instead of
+# buffering them (the root filesystem is read-only, RAM is small).
+server.max-request-size = 262144
+server.stream-request-body = 2
+server.upload-dirs = ( "$DATA/.webtmp" )
+server.errorlog = "/dev/null"
+server.modules += ( "mod_cgi", "mod_setenv", "mod_access", "mod_redirect" )
+index-file.names = ( "index.html" )
+cgi.assign = ( "/cgi-bin/api" => "" )
+mimetype.assign = (
+	".html" => "text/html; charset=utf-8", ".js" => "text/javascript; charset=utf-8",
+	".css" => "text/css; charset=utf-8", ".woff2" => "font/woff2",
+	".txt" => "text/plain; charset=utf-8", ".png" => "image/png", ".gif" => "image/gif" )
+setenv.add-response-header = (
+	"X-Content-Type-Options" => "nosniff",
+	"X-Frame-Options" => "DENY",
+	"Referrer-Policy" => "no-referrer",
+	"Cross-Origin-Opener-Policy" => "same-origin",
+	"Content-Security-Policy" => "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" )
+EOF
+}
+
+start() {
+	mkdir -p "$RUN" "$DATA/.webtmp"
+	if [ -f "$RUN/ap-mode" ]; then
+		{
+			common_conf
+			echo 'server.port = 80'
+			echo 'server.error-handler-404 = "/setup.html"'
+		} > "$CONF"
+	else
+		make_cert || { echo "pico8os-web: certificate failed" >&2; return 1; }
+		write_auth
+		{
+			common_conf
+			cat <<EOF
+server.port = 443
+server.modules += ( "mod_openssl" )
+ssl.engine = "enable"
+ssl.pemfile = "$TLS/server.pem"
+ssl.openssl.ssl-conf-cmd = ( "MinProtocol" => "TLSv1.2" )
+setenv.add-response-header += ( "Strict-Transport-Security" => "max-age=31536000" )
+\$SERVER["socket"] == ":80" {
+	ssl.engine = "disable"
+	url.redirect = ( "" => "https://\${url.authority}\${url.path}\${qsa}" )
+}
+EOF
+		} > "$CONF"
+	fi
+	chmod 0644 "$CONF"
+	lighttpd -f "$CONF"
+}
+
+stop() { killall lighttpd 2>/dev/null; sleep 0.3; }
 
 case ${1:-} in
 	start) start ;;
