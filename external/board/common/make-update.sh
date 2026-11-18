@@ -16,11 +16,14 @@ tar -C "$BINARIES_DIR/bootfs/a" --exclude=./cmdline.txt --owner=0 --group=0 --nu
 	-czf "$UPD/boot.tar.gz" .
 cp "$BINARIES_DIR/cmdline.txt.in" "$UPD/cmdline.txt.in"
 sum() { sha256sum "$1" | cut -d' ' -f1; }
+# -L: images/rootfs.ext4 is a symlink to rootfs.ext2
+rootfs_size=$(stat -L -c %s "$BINARIES_DIR/rootfs.ext4")
+case $rootfs_size in ''|*[!0-9]*) echo "bad rootfs size: $rootfs_size" >&2; exit 1 ;; esac
 cat > "$UPD/manifest" <<MANIFEST
 format=1
 board=$PICO8OS_BOARD
 version=$PICO8OS_VERSION
-rootfs_size=$(stat -L -c %s "$BINARIES_DIR/rootfs.ext4")   # -L: rootfs.ext4 is a symlink
+rootfs_size=$rootfs_size
 rootfs_sha256=$(sum "$UPD/rootfs.ext4.gz")
 boot_sha256=$(sum "$UPD/boot.tar.gz")
 cmdline_sha256=$(sum "$UPD/cmdline.txt.in")

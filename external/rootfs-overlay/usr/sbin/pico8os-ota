@@ -75,6 +75,7 @@ verify() {
 		[ -n "$want" ] && [ "$want" = "$got" ] || die corrupt "$m"
 	done
 	size=$(manifest_get rootfs_size "$WORK/manifest")
+	case $size in ''|*[!0-9]*) die format ;; esac
 	target=$(slot_part "$(other_slot "$(current_slot)")")
 	psize=$(( $(cat "/sys/class/block/${target#/dev/}/size" 2>/dev/null || echo 0) * 512 ))
 	[ "$size" -le "$psize" ] || die nofit
