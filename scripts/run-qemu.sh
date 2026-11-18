@@ -7,7 +7,8 @@
 # Like the Pi firmware, this reads slot.txt from the boot partition and boots
 # that slot's kernel and cmdline.txt, so OTA updates and rollbacks work in
 # QEMU too. Needs mtools (port install mtools / apt install mtools).
-# Web UI: http://localhost:8080 (forwarded). Serial console is on this
+# Web UI: https://localhost:8443 (forwarded, reachable from this host only).
+# Serial console is on this
 # terminal (login: root); quit with Ctrl-A X.
 set -eu
 cd "$(dirname "$0")/.."
@@ -80,7 +81,7 @@ while :; do
 		-drive if=none,file="$DISK",format=raw,id=hd0 -device virtio-blk-device,drive=hd0 \
 		-device virtio-gpu-device \
 		-device virtio-keyboard-device -device virtio-tablet-device \
-		-netdev user,id=net0,hostfwd=tcp::8080-:80 -device virtio-net-device,netdev=net0 \
+		-netdev user,id=net0,hostfwd=tcp:127.0.0.1:8080-:80,hostfwd=tcp:127.0.0.1:8443-:443 -device virtio-net-device,netdev=net0 \
 		-audiodev "$AUDIO",id=snd0 -device virtio-sound-device,audiodev=snd0 \
 		$DISPLAY_OPT -serial mon:stdio || exit $?
 

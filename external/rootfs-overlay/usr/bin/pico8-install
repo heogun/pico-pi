@@ -31,14 +31,14 @@ MSG
 }
 
 src=$(find_folder) || src=$(find_zip)
-if [ -n "$src" ] && [ "$(cat "$PICO8_DIR/.source" 2>/dev/null)" != "$(source_sum "$src")" ]; then
+if [ -n "$src" ] && [ "$(cat "$PICO8_DIR.meta/source" 2>/dev/null)" != "$(source_sum "$src")" ]; then
 	say "Checking and installing PICO-8 from $(basename "$src") ..."
 	install_from "$src"; rc=$?
 	if [ $rc = 3 ] && update_pico8_hashes; then
 		install_from "$src"; rc=$?          # the version may be listed now
 	fi
 	if [ $rc != 0 ] && is_installed; then
-		log "keeping the installed PICO-8 ($(cat "$PICO8_DIR/.verify" 2>/dev/null))"
+		log "keeping the installed PICO-8 ($(cat "$PICO8_DIR.meta/verify" 2>/dev/null))"
 		sleep 5
 	fi
 fi

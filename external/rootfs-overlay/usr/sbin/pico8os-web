@@ -2,19 +2,22 @@
 # PICO8-OS web management UI (lighttpd, running as www).
 #   pico8os-web start|stop|restart
 #
-# Normal mode: HTTPS on 443 with a self-signed certificate made on first
-# boot (/state/tls, fingerprint in PICO8DATA/web-certificate.txt); port 80
-# only redirects to HTTPS. The API needs a login (session cookie, see
-# cgi-bin/api); www never sees the password itself, only a salted SHA-256
-# ($RUN/web-auth, root:www 0640).
-# Wi-Fi setup (AP) mode: plain HTTP on 80 (phones' captive portal checks
-# need it; the AP itself is WPA2), every unknown URL shows the setup page,
-# and the API only allows the Wi-Fi setup actions.
+# Admin listener, always: HTTPS on 443 with a self-signed certificate made
+# on first boot (/state/tls, fingerprint in PICO8DATA/web-certificate.txt).
+# Every API action needs a login (session cookie, see cgi-bin/api); www
+# never sees the password itself, only a salted SHA-256 ($RUN/web-auth,
+# root:www 0640). Port 80 only redirects to HTTPS.
+# Wi-Fi setup (AP) mode adds a second listener bound to the access point's
+# own address only (192.168.4.1:80, plain HTTP: phones' captive portal
+# checks need it; the AP itself is WPA2). There every unknown URL shows the
+# setup page and the API only allows the Wi-Fi setup actions. The server
+# tells the CGI which listener a request came in on (PICO8OS_LISTENER).
 . /usr/lib/pico8os/lib.sh
 load_config
 WWW=/usr/share/pico8os/www
 CONF="$RUN/lighttpd.conf"
 TLS=/state/tls
+AP_IP=192.168.4.1
 
 make_cert() {
 	[ -s "$TLS/server.pem" ] && return 0
@@ -56,6 +59,7 @@ server.max-request-size = 262144
 server.stream-request-body = 2
 server.upload-dirs = ( "$DATA/.webtmp" )
 server.errorlog = "/dev/null"
+setenv.set-environment = ( "PICO8OS_LISTENER" => "admin" )
 server.modules += ( "mod_cgi", "mod_setenv", "mod_access", "mod_redirect" )
 index-file.names = ( "index.html" )
 cgi.assign = ( "/cgi-bin/api" => "" )
@@ -68,37 +72,43 @@ setenv.add-response-header = (
 	"X-Frame-Options" => "DENY",
 	"Referrer-Policy" => "no-referrer",
 	"Cross-Origin-Opener-Policy" => "same-origin",
-	"Content-Security-Policy" => "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" )
+	"Content-Security-Policy" => "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" )
 EOF
 }
 
 start() {
 	mkdir -p "$RUN" "$DATA/.webtmp"
-	if [ -f "$RUN/ap-mode" ]; then
-		{
-			common_conf
-			echo 'server.port = 80'
-			echo 'server.error-handler-404 = "/setup.html"'
-		} > "$CONF"
-	else
-		make_cert || { echo "pico8os-web: certificate failed" >&2; return 1; }
-		write_auth
-		{
-			common_conf
-			cat <<EOF
+	make_cert || { echo "pico8os-web: certificate failed" >&2; return 1; }
+	write_auth
+	{
+		common_conf
+		cat <<EOF
 server.port = 443
 server.modules += ( "mod_openssl" )
 ssl.engine = "enable"
 ssl.pemfile = "$TLS/server.pem"
 ssl.openssl.ssl-conf-cmd = ( "MinProtocol" => "TLSv1.2" )
-setenv.add-response-header += ( "Strict-Transport-Security" => "max-age=31536000" )
-\$SERVER["socket"] == ":80" {
-	ssl.engine = "disable"
-	url.redirect = ( "" => "https://\${url.authority}\${url.path}\${qsa}" )
+\$HTTP["scheme"] == "https" {
+	setenv.add-response-header += ( "Strict-Transport-Security" => "max-age=31536000" )
 }
 EOF
-		} > "$CONF"
-	fi
+		if [ -f "$RUN/ap-mode" ]; then
+			cat <<EOF
+\$SERVER["socket"] == "$AP_IP:80" {
+	ssl.engine = "disable"
+	setenv.set-environment = ( "PICO8OS_LISTENER" => "ap" )
+	server.error-handler-404 = "/setup.html"
+}
+EOF
+		else
+			cat <<'EOF'
+$SERVER["socket"] == ":80" {
+	ssl.engine = "disable"
+	url.redirect = ( "" => "https://${url.authority}${url.path}${qsa}" )
+}
+EOF
+		fi
+	} > "$CONF"
 	chmod 0644 "$CONF"
 	lighttpd -f "$CONF"
 }

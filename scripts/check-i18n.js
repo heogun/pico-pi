@@ -18,9 +18,13 @@ for (const f of ['index.html', 'setup.html']) {
   const h = fs.readFileSync(path.join(www, f), 'utf8');
   for (const r of h.matchAll(/data-i18n(?:-ph)?="([a-z0-9_]+)"/g)) used.add(r[1]);
   for (const r of h.matchAll(/\bt\('([a-z0-9_]+)'/g)) used.add(r[1]);
-  for (const r of h.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
-    try { new Function(r[1]); } catch (e) { console.log(`${f}: script syntax: ${e.message}`); bad++; }
-  }
+  // inline scripts and handlers are forbidden by the CSP (pico8os-web)
+  if (/<script>|\son[a-z]+=/i.test(h)) { console.log(`${f}: inline script or event handler`); bad++; }
+}
+for (const f of ['app.js', 'setup.js']) {
+  const js = fs.readFileSync(path.join(www, f), 'utf8');
+  try { new Function(js); } catch (e) { console.log(`${f}: script syntax: ${e.message}`); bad++; }
+  for (const r of js.matchAll(/\bt\('([a-z0-9_]+)'/g)) used.add(r[1]);
 }
 // message codes produced by the device
 const api = fs.readFileSync(path.join(www, 'cgi-bin/api'), 'utf8');

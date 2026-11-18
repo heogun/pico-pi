@@ -2,9 +2,13 @@
 # Neither account can log in ("*").
 #   pico  runs PICO-8: display, render, input and audio devices only.
 #         Owns the PICO8DATA partition (saves, carts).
+#   pico8cfg runs only the PICO8-OS settings cart (from a fresh copy of the
+#         read-only original, in /run/pico8os/cfg). Only it can send the
+#         agent settings-cart requests and read the status it writes back.
 #   www   runs the web UI (busybox httpd -u www). Group of the PICO8DATA
 #         partition (read/write) and of /run/pico8os/priv, through which it
 #         asks pico8os-agent (root) for privileged actions. pico is NOT in
 #         the www group, so carts cannot reach that channel.
 pico 1000 pico 1000 * /home/pico /bin/sh video,audio,input,render PICO-8 player
 www 1001 www 1001 * - - - PICO8-OS web UI
+pico8cfg 1002 pico8cfg 1002 * - /bin/sh video,audio,input,render PICO8-OS settings screen

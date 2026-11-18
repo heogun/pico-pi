@@ -8,9 +8,16 @@
 # Runs as the unprivileged www user (lighttpd). It reads and writes the data
 # partition itself (group www); everything that needs root goes through priv
 # (lib.sh) to pico8os-agent, which only runs whitelisted commands.
-# Every state change needs POST + "X-Pico8os: 1" (CSRF). Every action needs
-# a login session (cookie sid) except "login" itself and Wi-Fi setup (AP)
-# mode; failed logins lock the client out for growing periods.
+# Every state change needs POST + "X-Pico8os: 1" (CSRF).
+# Two listeners (see pico8os-web), told apart by PICO8OS_LISTENER, which the
+# server sets (a client cannot):
+#   admin  (HTTPS) every action needs a login session (cookie sid) except
+#          "login" itself, always, whatever mode Wi-Fi is in. Failed logins
+#          slow down one client at a time (see note_failure).
+#   ap     (plain HTTP, bound to the setup network's address only, while the
+#          setup access point runs) only status / wifi_scan / wifi_set,
+#          without login; wifi_set can change the Wi-Fi network and nothing
+#          else (pico8os-agent keeps it in its own root-only file).
 . /usr/lib/pico8os/lib.sh
 load_config
 
@@ -32,6 +39,7 @@ need_login() { printf 'Status: 401 Unauthorized\r\n'; reply false login_required
 # ---- sessions and login rate limiting ----
 SESS_DIR="$RUN/sessions"; AUTH_DIR="$RUN/auth"; SESSION_TTL=43200
 now=$(date +%s)
+LISTENER=${PICO8OS_LISTENER:-admin}
 session_id() {
 	printf '%s' "${HTTP_COOKIE:-}" | tr ';' '\n' | sed -n 's/^ *sid=\([0-9a-f]\{48\}\)$/\1/p' | head -n 1
 }
@@ -43,20 +51,53 @@ check_session() {
 	fi
 	touch "$SESS_DIR/$sid"
 }
-# lockout state "<failures> <locked-until>" per client address and globally
+# Login rate limiting, updated under a lock (concurrent requests):
+#  per client "<failures> <locked-until> <last-failure>": 5 free tries, then
+#    30 s doubling up to 15 min; forgotten 15 min after the last failure
+#    and on a successful login;
+#  all clients "<window-start> <failures>": more than 30 failures within a
+#    minute pause logins for the rest of that minute only, so no client can
+#    lock the owner out for long.
+CLIENT_FREE=5 CLIENT_MAX_LOCK=900 CLIENT_FORGET=900 GLOBAL_WINDOW=60 GLOBAL_MAX=30
 ip_file() { printf '%s/%s' "$AUTH_DIR" "$(printf '%s' "${REMOTE_ADDR:-unknown}" | tr -c '0-9A-Fa-f' '_')"; }
-locked_for() { # FILE -> seconds still locked (0 = free)
-	set -- $(cat "$1" 2>/dev/null) 0 0
-	[ "$2" -gt "$now" ] && echo $(( $2 - now )) || echo 0
+auth_lock() {
+	i=0
+	until mkdir "$AUTH_DIR/.lock" 2>/dev/null; do
+		# a lock older than 10 s belongs to a request that died
+		if [ $(( now - $(stat -c %Y "$AUTH_DIR/.lock" 2>/dev/null || echo "$now") )) -gt 10 ]; then
+			rmdir "$AUTH_DIR/.lock" 2>/dev/null; continue
+		fi
+		i=$((i + 1)); [ $i -gt 50 ] && return 1
+		sleep 0.1
+	done
 }
-note_failure() { # FILE THRESHOLD: lock 60 s after THRESHOLD failures, doubling, max 1 h
-	set -- "$1" "$2" $(cat "$1" 2>/dev/null) 0 0
-	f=$(( $3 + 1 )) until=$4
-	if [ $f -ge "$2" ]; then
-		d=$(( 60 << (f - $2) )); [ $d -gt 3600 ] && d=3600
+auth_unlock() { rmdir "$AUTH_DIR/.lock" 2>/dev/null; }
+# write FILE atomically
+auth_put() { printf '%s\n' "$2" > "$1.$$" && mv "$1.$$" "$1"; }
+# login_wait: seconds this client must still wait (0 = may try)
+login_wait() {
+	set -- $(cat "$(ip_file)" 2>/dev/null) 0 0 0
+	w=0; [ "$2" -gt "$now" ] && w=$(( $2 - now ))
+	set -- $(cat "$AUTH_DIR/_all" 2>/dev/null) 0 0
+	if [ "$2" -gt "$GLOBAL_MAX" ] && [ $(( now - $1 )) -lt "$GLOBAL_WINDOW" ]; then
+		g=$(( $1 + GLOBAL_WINDOW - now )); [ "$g" -gt "$w" ] && w=$g
+	fi
+	echo "$w"
+}
+note_failure() {
+	ipf=$(ip_file)
+	set -- $(cat "$ipf" 2>/dev/null) 0 0 0
+	f=$1 until=$2
+	[ $(( now - $3 )) -ge "$CLIENT_FORGET" ] && f=0
+	f=$((f + 1))
+	if [ "$f" -ge "$CLIENT_FREE" ]; then
+		d=$(( 30 << (f - CLIENT_FREE) )); { [ "$d" -gt "$CLIENT_MAX_LOCK" ] || [ "$d" -le 0 ]; } && d=$CLIENT_MAX_LOCK
 		until=$(( now + d ))
 	fi
-	echo "$f $until" > "$1"
+	auth_put "$ipf" "$f $until $now"
+	set -- $(cat "$AUTH_DIR/_all" 2>/dev/null) 0 0
+	if [ $(( now - $1 )) -ge "$GLOBAL_WINDOW" ]; then auth_put "$AUTH_DIR/_all" "$now 1"
+	else auth_put "$AUTH_DIR/_all" "$1 $(( $2 + 1 ))"; fi
 }
 
 # priv_or_fail CMD...: run a privileged action; the request fails with it
@@ -77,6 +118,15 @@ param() {
 	return 1
 }
 body() { head -c "${CONTENT_LENGTH:-0}"; }
+# room_for MAXBYTES: the upload is at most MAXBYTES and leaves 32 MB of
+# PICO8DATA free.
+room_for() {
+	n=${CONTENT_LENGTH:-0}
+	case $n in ''|*[!0-9]*) return 1 ;; esac
+	[ "$n" -le "$1" ] || return 1
+	free=$(df -k "$DATA" 2>/dev/null | awk 'NR == 2 {print $4}')
+	[ $(( ${free:-0} * 1024 - n )) -ge $((32 * 1048576)) ]
+}
 need_post() { [ "$REQUEST_METHOD" = POST ] || fail post_required; }  # (also enforced globally below)
 
 # File names from the browser: one path component, no hidden files.
@@ -112,19 +162,22 @@ wifi_state() {
 }
 
 AP_ONLY="status wifi_scan wifi_set"
-READ_ONLY="status conf_get carts shots shot log bt_list wifi_scan"
+READ_ONLY="status conf_get carts shots shot log bt_list wifi_scan policy"
 action=$(param a) || action=status
-if [ -f "$RUN/ap-mode" ]; then
-	case " $AP_ONLY " in *" $action "*) ;; *) fail ap_only ;; esac
-else
+case $LISTENER in
+ap)
+	# only on the setup network's own address (pico8os-web binds it there)
+	[ "${SERVER_ADDR:-}" = 192.168.4.1 ] || fail ap_only
+	case " $AP_ONLY " in *" $action "*) ;; *) fail ap_only ;; esac ;;
+*)
 	# DNS rebinding: only answer for the console's own address or name.
 	host=${HTTP_HOST%:*}
 	case $host in
 		''|localhost|pico8os|pico8os.local) ;;
 		\[*\]) ;;                       # IPv6 literal
 		*[!0-9.]*) fail bad_origin ;;   # not an IPv4 literal
-	esac
-fi
+	esac ;;
+esac
 # CSRF: anything that changes state must be a POST carrying X-Pico8os: 1
 # (a custom header a foreign web page cannot send without a CORS preflight,
 # which this server never grants) and, if the browser sends one, a matching
@@ -139,27 +192,25 @@ case " $READ_ONLY " in
 		;;
 esac
 
-# Login (not in Wi-Fi setup mode, where only Wi-Fi actions exist).
-if [ ! -f "$RUN/ap-mode" ]; then
+# Login: every action on the admin listener, whatever the Wi-Fi mode.
+if [ "$LISTENER" != ap ]; then
 	case $action in
 	login)
-		ipf=$(ip_file); glob="$AUTH_DIR/_all"
-		wait=$(locked_for "$ipf"); gw=$(locked_for "$glob")
-		[ "$gw" -gt "$wait" ] && wait=$gw
-		[ "$wait" -gt 0 ] && fail locked "$wait"
 		[ "${CONTENT_LENGTH:-0}" -le 1024 ] || fail too_large
 		pw=$(param pw "$(body)")
+		auth_lock || fail locked 1
+		wait=$(login_wait)
+		if [ "$wait" -gt 0 ]; then auth_unlock; fail locked "$wait"; fi
 		set -- $(cat "$RUN/web-auth" 2>/dev/null)
 		try=$(printf '%s%s' "${1:-}" "$pw" | sha256sum | cut -d' ' -f1)
 		if [ -n "${2:-}" ] && [ "$try" = "$2" ]; then
-			rm -f "$ipf"
+			rm -f "$(ip_file)"; auth_unlock
 			sid=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
 			: > "$SESS_DIR/$sid"
 			printf 'Set-Cookie: sid=%s; Path=/; Max-Age=%s; HttpOnly; Secure; SameSite=Strict\r\n' "$sid" "$SESSION_TTL"
 			ok logged_in
 		fi
-		note_failure "$ipf" 5       # per client: 5 tries
-		note_failure "$glob" 20     # everyone together: 20 tries
+		note_failure; auth_unlock
 		sleep 1                     # slow down guessing
 		fail bad_password ;;
 	logout)
@@ -177,8 +228,8 @@ status)
 	printf '"version":%s,"board":%s,"slot":%s,"ip":%s,"wifi":%s,"ap":%s,' \
 		"$(json_str "$(os_version)")" "$(json_str "$(os_board)")" "$(json_str "$(current_slot)")" \
 		"$(json_str "$(current_ip)")" "$(json_str "$(wifi_state)")" \
-		"$([ -f "$RUN/ap-mode" ] && echo true || echo false)"
-	printf '"pico8_verify":%s,' "$(json_str "$(cat "$PICO8_DIR/.verify" 2>/dev/null)")"
+		"$([ "$LISTENER" = ap ] && echo true || echo false)"
+	printf '"pico8_verify":%s,' "$(json_str "$(cat "$PICO8_DIR.meta/verify" 2>/dev/null)")"
 	printf '"pico8":%s,"uptime":%s,"data_free":%s,' \
 		"$(json_str "$(pico8_version)")" "$(json_str "$(uptime | sed 's/^.*up *//; s/, *load.*//')")" \
 		"$(json_str "$(df -h "$DATA" 2>/dev/null | awk 'NR==2{print $4}')")"
@@ -195,10 +246,24 @@ conf_put)
 	priv apply >/dev/null 2>&1
 	ok saved ;;
 set)
-	k=$(param k) || fail unknown_setting; v=$(param v)
-	set_conf "$k" "$v" || fail unknown_setting "$k"
-	priv apply "$k" >/dev/null 2>&1
+	# k and v from the body (passwords) or the query string
+	[ "${CONTENT_LENGTH:-0}" -le 4096 ] || fail too_large
+	b=$(body)
+	k=$(param k "$b") || k=$(param k) || fail unknown_setting
+	v=$(param v "$b") || v=$(param v)
+	if has_word "$POLICY_KEYS" "$k"; then
+		# root-only policy file: through the agent, which validates it
+		priv set_policy "$k" "$v" >/dev/null 2>&1 || fail bad_value "$k"
+	elif has_word "$USER_KEYS" "$k"; then
+		set_conf "$k" "$v" || fail unknown_setting "$k"
+		priv apply "$k" >/dev/null 2>&1
+	else
+		fail unknown_setting "$k"     # Wi-Fi: wifi_set
+	fi
 	ok saved_key "$k" ;;
+policy)
+	hdr
+	priv get_policy 2>/dev/null | awk -F= 'BEGIN{printf "{"} NR>1{printf ","} {printf "\"%s\":\"%s\"", $1, $2} END{print "}"}' ;;
 carts)
 	hdr
 	printf '['
@@ -246,6 +311,7 @@ pico8_put)
 	need_post
 	n=$(safe_name "$(param name)") || fail bad_name
 	case $n in pico-8*raspi*.zip) ;; *) fail expect_zip ;; esac
+	room_for $((128 * 1048576)) || fail too_large
 	body > "$DATA/.$n.part" && mv "$DATA/.$n.part" "$DATA/$n" && sync
 	priv restart_pico8 >/dev/null 2>&1   # the session installs it on start
 	ok zip_installing "$n" ;;
@@ -262,7 +328,7 @@ bt_remove)
 	ok removed "$mac" ;;
 wifi_scan)
 	hdr
-	if [ -f "$RUN/ap-mode" ]; then cat "$RUN/wifi-scan.txt" 2>/dev/null
+	if [ "$LISTENER" = ap ]; then cat "$RUN/wifi-scan.txt" 2>/dev/null
 	else PRIV_TIMEOUT=20 priv wifi_scan 2>/dev/null; fi | json_list; echo ;;
 wifi_set)
 	need_post
@@ -272,12 +338,14 @@ wifi_set)
 	psk=$(param psk "$b"); country=$(param country "$b")
 	[ -z "$ssid" ] && fail ssid_missing
 	[ -n "$psk" ] && { [ ${#psk} -ge 8 ] && [ ${#psk} -le 63 ] || fail psk_len; }
-	set_conf WIFI_SSID "$ssid" && set_conf WIFI_PSK "$psk" || fail quotes
-	[ -n "$country" ] && set_conf WIFI_COUNTRY "$(printf '%s' "$country" | tr -cd 'A-Za-z' | tr 'a-z' 'A-Z' | head -c 2)"
-	priv wifi_restart >/dev/null 2>&1
+	country=$(printf '%s' "$country" | tr -cd 'A-Za-z' | tr 'a-z' 'A-Z' | head -c 2)
+	[ ${#country} = 1 ] && country=
+	# stored by the agent in its root-only Wi-Fi file, nowhere else
+	priv wifi_set "$ssid" "$psk" "$country" >/dev/null 2>&1 || fail quotes
 	ok connecting "$ssid" ;;
 ota_put)
 	need_post
+	room_for $((320 * 1048576)) || fail too_large
 	mkdir -p "$DATA/ota"
 	body > "$DATA/ota/upload.pico8os-update.part" || fail upload_failed
 	mv "$DATA/ota/upload.pico8os-update.part" "$DATA/ota/upload.pico8os-update"; sync

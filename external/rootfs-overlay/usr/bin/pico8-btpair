@@ -1,6 +1,11 @@
 #!/bin/sh
-# Pair nearby Bluetooth game controllers automatically.
+# Pairing window for Bluetooth game controllers.
 #   pico8-btpair [SECONDS]   (default 90)
+# Opened by a person: Ctrl+Alt+P / the settings cart at the console, the
+# logged-in web UI, or BT_PAIR_SECONDS after boot (off by default). The
+# window pairs ONE controller and closes; the paired device is logged with
+# its name and address (logs/bluetooth.log, web UI) so it can be checked
+# and removed. Afterwards the adapter is neither pairable nor discoverable.
 # Put the controller in pairing mode during the window, e.g.
 #   PS4/PS5: hold SHARE/CREATE + PS     Switch Pro / Joy-Con: SYNC button
 #   Xbox One/Series: hold the pair button   8BitDo: see its manual
@@ -13,7 +18,14 @@ LOG="$DATA/logs/bluetooth.log"
 LOCK=/tmp/btpair.lock
 TRIED=/tmp/btpair.tried
 mkdir "$LOCK" 2>/dev/null || exit 0     # one pairing window at a time
-trap 'bluetoothctl scan off >/dev/null 2>&1; rm -rf "$LOCK"' EXIT INT TERM
+close() {
+	bluetoothctl scan off >/dev/null 2>&1
+	bluetoothctl pairable off >/dev/null 2>&1
+	bluetoothctl discoverable off >/dev/null 2>&1
+	rm -rf "$LOCK"
+}
+trap close EXIT
+trap 'exit 1' INT TERM
 
 log() { mkdir -p "$DATA/logs"; echo "$(date '+%F %T') $*" >> "$LOG"; }
 
@@ -52,7 +64,8 @@ while [ "$(date +%s)" -lt "$end" ]; do
 		if bluetoothctl --agent NoInputNoOutput --timeout 25 pair "$mac" 2>&1 | grep -q -i 'pairing successful'; then
 			bluetoothctl trust "$mac" >/dev/null 2>&1
 			bluetoothctl --timeout 10 connect "$mac" >/dev/null 2>&1
-			log "paired $name ($mac)"
+			log "paired $name ($mac); pairing window closed"
+			exit 0
 		else
 			log "pairing failed: $name ($mac)"
 		fi

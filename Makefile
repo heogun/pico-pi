@@ -4,6 +4,9 @@
 #   make docker-rpi4   same, inside Docker (macOS / any host)
 
 BR_VERSION ?= 2026.02.3
+# sha256 of buildroot-$(BR_VERSION).tar.xz, from the release's signed
+# .tar.xz.sign (update both together).
+BR_SHA256  ?= 5a59e7501b0b4ec52c41f4bfa79412320e0b37eae5f719605a258e8d0c6fc7fb
 BR_DIR     ?= $(CURDIR)/buildroot
 OUT_ROOT   ?= $(CURDIR)/output
 DIST_DIR   ?= $(CURDIR)/dist
@@ -53,15 +56,20 @@ buildroot: $(BR_DIR)/Makefile
 # images only carry ota-public.pem. Keep keys/ safe: whoever has the private
 # key can push updates to your consoles. Lose it and you can only update by
 # re-flashing the SD card.
-keys: $(KEYS)/ota-public.pem
+# Builds need only keys/ota-public.pem (kept in git). Bundles are signed
+# when keys/ota-private.pem exists, else left for scripts/sign-update.sh
+# (CI signs in a separate job that never runs the build).
+#   make keys   create the private key if missing and (re)write the public one
+keys: $(KEYS)/ota-private.pem
+	openssl ec -in $< -pubout -out $(KEYS)/ota-public.pem
 
 $(KEYS)/ota-private.pem:
 	mkdir -p $(KEYS)
-	openssl ecparam -name prime256v1 -genkey -noout -out $@
+	umask 077 && openssl ecparam -name prime256v1 -genkey -noout -out $@
 	chmod 600 $@
 
-$(KEYS)/ota-public.pem: $(KEYS)/ota-private.pem
-	openssl ec -in $< -pubout -out $@
+$(KEYS)/ota-public.pem:
+	@echo "missing $@: run 'make keys' (new key) or restore it from git" >&2; exit 1
 
 # Settings-cart languages: regenerate lang_*.p8 after editing
 # tools/i18n/cart-strings.json (the generated carts are kept in git, so normal
@@ -113,10 +121,15 @@ $(VENV)/bin/python:
 webfonts: $(NOTO_CACHE)/OFL.txt $(VENV)/bin/python
 	$(VENV)/bin/python -I tools/gen-webfonts.py $(NOTO_CACHE) $(WWW_DIR)
 
+# Download, check against the pinned hash, then unpack (never unpack first).
 $(BR_DIR)/Makefile:
-	mkdir -p $(BR_DIR)
-	curl -fL https://buildroot.org/downloads/buildroot-$(BR_VERSION).tar.xz \
-		| tar -xJ -C $(BR_DIR) --strip-components=1
+	mkdir -p $(BR_DIR) $(CURDIR)/.cache
+	curl -fL -o $(CURDIR)/.cache/buildroot-$(BR_VERSION).tar.xz.part \
+		https://buildroot.org/downloads/buildroot-$(BR_VERSION).tar.xz
+	echo "$(BR_SHA256)  $(CURDIR)/.cache/buildroot-$(BR_VERSION).tar.xz.part" | shasum -a 256 -c - \
+		|| { rm -f $(CURDIR)/.cache/buildroot-$(BR_VERSION).tar.xz.part; exit 1; }
+	tar -xJf $(CURDIR)/.cache/buildroot-$(BR_VERSION).tar.xz.part -C $(BR_DIR) --strip-components=1
+	rm -f $(CURDIR)/.cache/buildroot-$(BR_VERSION).tar.xz.part
 
 # $(1) = board
 define BOARD_RULES

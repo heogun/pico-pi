@@ -48,8 +48,9 @@ make rpi4
 결과물은 `dist/pico8os-<board>.img`(SD카드 이미지)와 `dist/pico8os-<board>-<버전>.pico8os-update`(OTA 업데이트 파일)입니다.
 이미지는 Raspberry Pi Imager나 `dd`로 SD카드에 씁니다.
 
-처음 빌드하면 `keys/ota-private.pem`(업데이트 서명 키)이 만들어집니다. **이 파일을 안전하게 보관하세요.**
-이 키로 서명한 업데이트만 콘솔에 설치되고(이미지에는 공개 키만 들어감), 키를 잃어버리면 이미 만든 콘솔은 SD카드를 다시 굽는 방법으로만 업데이트할 수 있습니다.
+이미지에는 git에 있는 `keys/ota-public.pem`이 들어갑니다. `keys/ota-private.pem`(업데이트 서명 키)이 있으면 OTA 파일에 바로 서명하고, 없으면 서명하지 않은 채로 두며 `scripts/sign-update.sh <파일>`로 따로 서명합니다.
+새 키는 `make keys`로 만듭니다(개인 키를 만들고 공개 키를 다시 씀). **개인 키를 안전하게 보관하세요.**
+이 키로 서명한 업데이트만 콘솔에 설치되고, 키를 잃어버리면 이미 만든 콘솔은 SD카드를 다시 굽는 방법으로만 업데이트할 수 있습니다.
 버전은 빌드 시각(`YYYY.MM.DD-HHMM`, UTC)이며 `make PICO8OS_VERSION=... rpi4`로 바꿀 수 있습니다.
 처음 빌드할 때는 툴체인, 커널, Mesa를 받아서 빌드하므로 수십 분에서 1시간 넘게 걸립니다.
 
@@ -69,14 +70,14 @@ make rpi4
 
 - 결과물(보드마다): `pico8os-<보드>-<버전>.img.xz`(SD카드 이미지), `pico8os-<보드>-<버전>.pico8os-update`(OTA), `latest-<보드>.txt`, SHA256SUMS
 - 다운로드, Buildroot 소스, ccache는 Actions 캐시로 재사용합니다(`EXTRA_CONFIG`로 CI에서만 ccache를 켬). 빌드는 러너의 큰 `/mnt` 디스크에서 합니다.
-- **OTA 서명 키:** 저장소 시크릿 `OTA_PRIVATE_KEY`에 `keys/ota-private.pem` 내용을 넣으세요.
+- **OTA 서명 키:** 저장소 시크릿 `OTA_PRIVATE_KEY`에 `keys/ota-private.pem` 내용을 넣으세요(git의 `keys/ota-public.pem`과 짝이어야 함). 이 키는 빌드 잡에 주지 않고, 빌드가 끝난 뒤 따로 도는 `sign` 잡만 씁니다.
   ```bash
   make keys
   ```
   ```bash
   gh secret set OTA_PRIVATE_KEY < keys/ota-private.pem
   ```
-  시크릿이 없으면 수동 빌드는 일회용 키로 만들어집니다(그 이미지로 구운 콘솔은 OTA 업데이트를 받을 수 없음). 태그 빌드는 시크릿이 없으면 실패합니다.
+  시크릿이 없으면 수동 빌드의 OTA 파일은 서명되지 않은 채로 남습니다(콘솔이 설치하지 않음). 태그 빌드는 시크릿이 없으면 실패합니다.
 - **릴리스 만들기:**
   ```bash
   git tag v0.1.0 && git push origin v0.1.0
@@ -108,7 +109,7 @@ PICO8DATA/
   logs/                    ← pico8.log (비정상 종료), kernel.log (전원 부족, SD 오류 등), bluetooth.log
 ```
 
-`pico8os.txt` 주요 항목:
+`pico8os.txt` 주요 항목 (★: 게임이 읽거나 바꿀 수 없도록 **처음 부팅할 때 콘솔의 보호된 저장소(`/state`, root 전용)로 옮기고 이 파일에서 지웁니다**. 그 뒤로는 웹 관리 페이지에서 바꾸거나, PICOBOOT 드라이브에 같은 형식의 `pico8os-setup.txt`를 넣으면 다음 부팅 때 읽고 지웁니다):
 
 | 키 | 값 |
 |---|---|
@@ -119,15 +120,15 @@ PICO8DATA/
 | `KEYMAP` | 키보드 레이아웃 (`us`, `uk`, `de`, `fr`, `jp106` …). 한국어 키보드는 `us` |
 | `WATCHDOG` | `on` (기본): 시스템이 멈추면 하드웨어 워치독이 재부팅 / `off` |
 | `HOTKEY` | `on` (기본): PICO-8 강제 재시작 단축키 사용 / `off` |
-| `PICO8_VERIFY` | `strict` (기본): 검증 목록에 있는 PICO-8만 설치 / `warn`: 목록에 없는 버전도 경고와 함께 설치. 파일이 손상되거나 변조된 경우는 항상 거부 |
+| `PICO8_VERIFY` ★ | `strict` (기본): 검증 목록에 있는 PICO-8만 설치 / `warn`: 목록에 없는 버전도 경고와 함께 설치. 파일이 손상되거나 변조된 경우는 항상 거부 |
 | `CPU_GOVERNOR` | 게임 중 CPU 클럭 정책: `performance` (기본) / `ondemand` / `schedutil` |
-| `DEBUG` | `off` (기본) / `on`: 시리얼 콘솔과 tty1에 root 셸 (문제 해결용, 재부팅 후 적용) |
+| `DEBUG` ★ | `off` (기본) / `on`: 시리얼 콘솔과 tty1에 root 셸 (문제 해결용, 재부팅 후 적용) |
 | `BLUETOOTH` | `on` (기본) / `off` |
-| `BT_PAIR_SECONDS` | 부팅 후 자동 페어링 시간(초, 기본 60). `0`이면 부팅 때 페어링하지 않음 |
+| `BT_PAIR_SECONDS` | 부팅 후 페어링 창을 여는 시간(초). 기본 `0`(열지 않음): 그동안은 근처의 누구나 페어링할 수 있어서입니다. 평소에는 `Ctrl+Alt+P`, 설정 카트, 웹으로 엽니다 |
 | `PICO8_ARGS` | PICO-8에 넘길 추가 옵션 |
 | `AUDIO_CARD` | `auto` (HDMI 우선) / `none` / ALSA 카드 번호 |
-| `WIFI_SSID`, `WIFI_PSK`, `WIFI_COUNTRY` | Wi-Fi (보통은 웹이나 설정 카트, 설정용 AP에서 입력) |
-| `WEB_PASSWORD` | 웹 관리 페이지 비밀번호. 비우면 처음 부팅 때 만든 비밀번호 사용(설정 카트에 표시) |
+| `WIFI_SSID`, `WIFI_PSK`, `WIFI_COUNTRY` ★ | Wi-Fi (보통은 웹이나 설정 카트, 설정용 AP에서 입력) |
+| `WEB_PASSWORD` ★ | 웹 관리 페이지 비밀번호. 비우면 처음 부팅 때 만든 비밀번호 사용(설정 카트에 표시) |
 | `OTA_URL` | 온라인 업데이트 서버 주소 (아래 [OTA 업데이트](#ota-업데이트)) |
 
 - **게임패드:** 아래 [게임패드](#게임패드) 참조.
@@ -169,7 +170,7 @@ Wi-Fi 설정이 없거나 40초 안에 연결하지 못하고 유선 연결도 �
 - 항목: info(버전, 슬롯, IP, 웹 주소와 비밀번호, Wi-Fi, 업데이트) / Wi-Fi 선택 + 화면 키보드로 비밀번호 입력 / 패드 페어링 / 키보드 레이아웃 / 시작 화면 / 종료 동작 / 업데이트 확인·설치 / PICO-8 재시작 / 재부팅 / 전원 끄기
 - 조작: ↑↓ 이동, ←→ 값 바꾸기, 🅾️ 선택, ❎ 뒤로/나가기. 나가면 PICO-8이 원래 모드로 다시 시작하며 바뀐 설정이 적용됩니다.
 - 카트와 OS 사이 통신: 카트가 `printh("<번호> <명령>", "pico8os_req.txt")`로 요청을 쓰면, `pico8os-agent`가 처리합니다. 결과는 `pico8os_status.p8`(스프라이트 메모리에 `key=value` 텍스트를 넣은 카트)에 쓰고, 카트가 `reload()`로 읽습니다.
-  두 파일은 tmpfs(`/run/pico8os/cart`)를 `carts/pico8os/`에 바인드 마운트한 곳에 있어서 SD카드에 쓰지 않습니다.
+  설정 카트는 `pico8cfg` 계정으로 `-root_path /run/pico8os/cfg/carts`(tmpfs)에서 실행되므로, 두 파일은 그 폴더에만 생기고 SD카드에 쓰지 않습니다.
   macOS용 PICO-8에서 헤드리스(`-x`)로 이 방식을 확인했습니다. `printh` 파일은 실행 방법에 따라 `carts/pico8os/`나 `carts/`에 생기므로 에이전트는 두 곳을 모두 봅니다.
 
 ## 언어
@@ -236,7 +237,7 @@ SDL이 처리하지 못하는 패드는 커널 드라이버 경로로 계속 동
 | 패드 | USB | 블루투스 | 비고 |
 |---|---|---|---|
 | Xbox 360 / One / Series | ✅ `xpad` | ✅ One/Series (BLE 펌웨어) | Xbox Wireless 어댑터 동글은 미지원 |
-| PS3 / PS4 / PS5 | ✅ | ✅ | PS3는 처음 한 번 USB로 연결해야 페어링됨 |
+| PS3 / PS4 / PS5 | ✅ | ✅ PS4/PS5만 | PS3 블루투스는 본딩 없이 연결해서 막았습니다(`ClassicBondedOnly=true`) |
 | Switch Pro / Joy-Con | ✅ | ✅ | Joy-Con은 한 짝씩 별도 패드로 동작 |
 | 8BitDo 등 서드파티 | ✅ | ✅ | X-input 또는 Switch 모드 권장 |
 | 범용 USB 패드 | ✅ | — | 매핑이 없으면 `sdl_controllers.txt` |
@@ -254,16 +255,20 @@ SDL이 처리하지 못하는 패드는 커널 드라이버 경로로 계속 동
 
 | 영역 | 방식 |
 |---|---|
-| 권한 분리 | PICO-8은 일반 계정 `pico`로 실행합니다(화면, 렌더, 입력, 오디오 장치만 사용 가능). 웹 서버와 CGI도 일반 계정 `www`로 실행합니다(lighttpd). root 권한이 필요한 동작(재부팅, Wi-Fi, 블루투스, OTA, 설정 적용)은 `pico8os-agent`(root)가 정해진 명령만 받아 처리합니다. 명령마다 인자를 검사하고, 통로는 `/run/pico8os/priv`(root:www 0730)입니다. `pico`는 `www` 그룹에 없어서, 카트는 이 통로에 접근할 수 없습니다 |
+| 권한 분리 | PICO-8은 일반 계정 `pico`로 실행합니다(화면, 렌더, 입력, 오디오 장치만 사용 가능). 웹 서버와 CGI도 일반 계정 `www`로 실행합니다(lighttpd). root 권한이 필요한 동작(재부팅, Wi-Fi, 블루투스, OTA, 설정 적용)은 `pico8os-agent`(root)가 정해진 명령만 받아 처리합니다. 명령마다 인자를 검사합니다. 요청은 `/run/pico8os/priv`(root:www 0730)에 들어오고, 에이전트가 root 전용 폴더로 옮긴 뒤 검사합니다. 응답은 root만 파일을 만들 수 있는 `/run/pico8os/priv-ans`(root:www 0750)에 둡니다. root는 다른 계정이 쓸 수 있는 폴더 안의 경로를 직접 열어 쓰지 않습니다. `pico`는 `www` 그룹에 없어서, 카트는 이 통로에 접근할 수 없습니다 |
+| 설정 분리 | 카트와 웹이 함께 쓰는 PICO8DATA의 `pico8os.txt`에는 일반 설정만 둡니다. 보안 정책(`DEBUG`, `PICO8_VERIFY`)과 웹 비밀번호는 `/state/policy.txt`에, Wi-Fi는 `/state/wifi.txt`에 둡니다(둘 다 root 0600, `/state`는 0700). 웹에서는 로그인한 뒤 에이전트를 거쳐서만 바꿀 수 있고, 설정용 AP 화면은 Wi-Fi 파일만 바꿀 수 있습니다. 설정 값은 다시 해석하지 않고 저장합니다(제어 문자 제거) |
 | 로그인 | root 비밀번호 로그인과 로그인 프롬프트(getty)가 없습니다. `DEBUG=on`일 때만 시리얼 콘솔과 tty1에 root 셸이 열립니다(`pico8os-debugsh`) |
-| 웹 HTTPS | lighttpd가 443번 포트에서 TLS 1.2 이상으로 서비스합니다. 인증서는 첫 부팅 때 콘솔에서 만든 자체 서명(P-256) 인증서이고, SHA-256 지문은 PICO8DATA의 `web-certificate.txt`에 있습니다. 처음 접속할 때 브라우저가 경고하면 이 지문과 비교하세요. 80번 포트는 HTTPS로 넘기기만 합니다(설정용 AP 모드만 예외로 HTTP). 응답마다 보안 헤더(CSP, `X-Frame-Options: DENY`, `nosniff`, `no-referrer`, HSTS)를 붙입니다 |
-| 웹 로그인 | 브라우저 기본 인증 대신 로그인 화면과 세션 쿠키를 씁니다(192비트 무작위, `HttpOnly; Secure; SameSite=Strict`, 12시간 동안 쓰지 않으면 만료). **비밀번호 대입 방지:** 한 주소에서 5번 틀리면 60초 잠기고, 더 틀릴 때마다 두 배로 늘어 최대 1시간까지 잠깁니다. 전체 주소를 합쳐 20번 틀려도 잠깁니다. 시도마다 1초씩 늦춥니다. 웹 서버(`www`)는 비밀번호 원문을 볼 수 없고, 솔트를 넣은 SHA-256만 받습니다 |
+| 웹 HTTPS | lighttpd가 443번 포트에서 TLS 1.2 이상으로 서비스합니다. 인증서는 첫 부팅 때 콘솔에서 만든 자체 서명(P-256) 인증서이고, SHA-256 지문은 PICO8DATA의 `web-certificate.txt`에 있습니다. 처음 접속할 때 브라우저가 경고하면 이 지문과 비교하세요. 80번 포트는 HTTPS로 넘기기만 합니다. 설정용 AP 모드에서는 AP 주소(192.168.4.1:80)에만 바인딩한 별도 HTTP 리스너가 Wi-Fi 설정 기능만 제공합니다. 어느 리스너로 들어온 요청인지는 웹 서버가 정하며(`PICO8OS_LISTENER`), 관리 API는 Wi-Fi 상태와 상관없이 항상 로그인을 요구합니다. 응답마다 보안 헤더(CSP, `X-Frame-Options: DENY`, `nosniff`, `no-referrer`, HSTS)를 붙입니다 |
+| 웹 로그인 | 브라우저 기본 인증 대신 로그인 화면과 세션 쿠키를 씁니다(192비트 무작위, `HttpOnly; Secure; SameSite=Strict`, 12시간 동안 쓰지 않으면 만료). **비밀번호 대입 방지:** 한 주소에서 5번 틀리면 30초 잠기고, 더 틀릴 때마다 두 배로 늘어 최대 15분까지 잠깁니다. 15분 동안 틀리지 않거나 로그인에 성공하면 기록을 지웁니다. 전체 주소를 합쳐 1분에 30번 넘게 틀리면 그 1분이 끝날 때까지만 멈춥니다. 그래서 한 기기가 주인을 오래 잠글 수 없습니다. 기록은 잠금을 잡고 원자적으로 갱신하며, 시도마다 1초씩 늦춥니다. 웹 서버(`www`)는 비밀번호 원문을 볼 수 없고, 솔트를 넣은 SHA-256만 받습니다 |
 | 웹 CSRF | 상태를 바꾸는 요청은 모두 POST에 `X-Pico8os: 1` 헤더가 있어야 받습니다. 다른 사이트는 CORS 사전 확인 없이 이 헤더를 보낼 수 없고, 이 서버는 사전 확인을 허용하지 않습니다. 브라우저가 보내는 `Origin`도 콘솔 주소와 같아야 합니다 |
 | DNS 리바인딩 | 웹 API는 `Host`가 IP 주소나 `pico8os`/`pico8os.local`일 때만 응답합니다 |
-| 설정 카트 | 카트가 보내는 요청은 시스템이 설정 카트를 띄웠을 때(단축키나 웹)만 받습니다. 웹 비밀번호가 들어 있는 상태 카트도 그때만 만듭니다. 그래서 인터넷에서 받은 카트는 설정을 바꾸거나 비밀번호를 읽을 수 없습니다. 심볼릭 링크로 된 요청 파일은 거부합니다 |
-| OTA | ECDSA P-256 서명 확인, 보드 확인, **다운그레이드 거부**, 3회 부팅 실패 시 자동 롤백 |
-| PICO-8 파일 검증 | Lexaloffle은 체크섬을 공개하지 않습니다. 그래서 이 프로젝트가 **검증된 빌드의 파일별 SHA-256 목록**(`pico8-hashes.txt`)을 OTA 키로 서명해 관리합니다. 이미지에 목록 사본이 들어 있고, 콘솔이 GitHub에서 최신 목록을 받아 서명을 확인한 뒤에만 사용합니다. 설치할 때 zip CRC(압축 해제), ELF 형식과 CPU 종류(32비트 ARM / AArch64), 버전, 파일 해시를 확인합니다. **변조되거나 손상된 파일은 항상 거부**하고, 목록에 없는 버전은 `PICO8_VERIFY`에 따라 처리합니다. 이미지에 PICO-8을 미리 넣을 때도 같은 검사를 거칩니다 |
+| 설정 카트 | 설정 카트는 별도 계정 `pico8cfg`로 실행합니다. 띄울 때마다 읽기 전용 원본을 `/run/pico8os/cfg`(`pico8cfg` 0700)에 새로 복사하고, 사용자의 `PICO8_ARGS`는 붙이지 않습니다. 요청과 웹 비밀번호가 들어 있는 상태 카트는 이 폴더에만 있어서, 일반 카트(`pico`)는 설정 카트의 코드를 바꾸거나, 요청을 보내거나, 비밀번호를 읽을 수 없습니다. 요청은 시스템이 설정 카트를 띄웠을 때만 받습니다 |
+| OTA | ECDSA P-256 서명 확인, 보드 확인, **다운그레이드 거부**, 3회 부팅 실패 시 자동 롤백. 서명한 manifest와 작은 페이로드(부트 파일, cmdline)는 root 전용 RAM 공간에 사본을 만들어 검증하고, 그 사본으로 설치합니다. 루트 파일시스템은 슬롯에 쓴 뒤 페이지 캐시를 비우고 다시 읽어 서명된 `rootfs_raw_sha256`과 맞을 때만 슬롯을 바꿉니다. 그래서 설치 중 번들 파일이 바뀌어도 검증하지 않은 시스템으로 부팅하지 않습니다. OTA 작업은 한 번에 하나만 합니다(잠금). 번들, `latest.txt`, 다운로드, 업로드 크기를 제한하고 PICO8DATA에 32MB 여유를 남깁니다 |
+| PICO-8 파일 검증 | Lexaloffle은 체크섬을 공개하지 않습니다. 그래서 이 프로젝트가 **검증된 빌드의 파일별 SHA-256 목록**(`pico8-hashes.txt`)을 OTA 키로 서명해 관리합니다. 이미지에 목록 사본이 들어 있고, 콘솔이 GitHub에서 최신 목록을 받아 서명을 확인한 뒤에만 사용합니다. 설치할 때는 크기 제한이 있는 root 전용 tmpfs에, 정해진 파일(`pico8.dat`, 실행 파일, 설명서와 라이선스)만 일반 파일로 꺼냅니다. 링크나 특수 파일, `..` 경로, 너무 큰 zip은 거부합니다. 그 사본으로 zip CRC, ELF 형식과 CPU 종류(32비트 ARM / AArch64), 버전, 파일 해시를 확인하고, 확인한 파일만 설치합니다. 설치 정보는 패키지 밖(`/opt/pico8.meta`)에 둡니다. **변조되거나 손상된 파일은 항상 거부**하고, 목록에 없는 버전은 `PICO8_VERIFY`에 따라 처리합니다. 이미지에 PICO-8을 미리 넣을 때도 같은 검사를 거칩니다 |
 | 설정용 AP | WPA2(무작위 비밀번호), 30분 동안 접속한 기기가 없으면 꺼짐 |
+| USB | PICO-8 zip을 찾을 때 FAT/exFAT만 `ro,nosuid,nodev,noexec`로 마운트합니다 |
+| 블루투스 | 페어링 창은 사람이 열 때만 열리고(부팅 때 자동으로 열지 않음), 컨트롤러 하나를 페어링하면 닫힙니다. 닫힐 때 pairable/discoverable을 끕니다. 페어링한 기기는 이름과 주소를 `logs/bluetooth.log`에 남깁니다. 본딩하지 않은 Classic HID는 받지 않습니다(`ClassicBondedOnly=true`). PS3 패드는 지원하지 않게 됩니다 |
+| 빌드 공급망 | Buildroot 소스는 고정한 SHA-256과 맞는지 확인한 뒤에 풉니다. CI에서 OTA 개인 키는 빌드와 분리된 `sign` 잡에만 주고, 빌드 잡은 공개 키만 씁니다(`scripts/sign-update.sh`) |
 | 저장소 | 시스템 읽기 전용, PICO8DATA는 `pico`(소유자)와 `www`(그룹)만 접근, 그 외 계정은 읽기도 불가. 쓰기 가능한 마운트(PICO8DATA, 상태 파티션, tmpfs)는 모두 `nosuid,nodev`이고 데이터 파티션은 `noexec`까지 걸어서, 실행 파일을 올려도 실행되지 않습니다 |
 | 커널 하드닝 | `linux-harden.fragment`: `/dev/mem`·`/dev/port`, kexec, 최대 절전, 사용자 네임스페이스, io_uring, binfmt_misc, uselib을 빼고 커널 로그를 root 전용으로 둡니다. `/etc/sysctl.d/90-pico8os.conf`: 커널 포인터 숨김, dmesg 제한, SysRq 끔, BPF 제한, 링크·FIFO 보호, setuid 코어 덤프 금지, oops 때 재부팅, ICMP 리다이렉트·소스 라우팅 거부, SYN 쿠키 등 |
 | 공격 표면 | 열려 있는 포트는 웹(443, 80은 HTTPS로 넘기기만 함)뿐입니다. dnsmasq는 설정용 AP일 때만 실행합니다. 커널에서 쓰지 않는 서브시스템(네트워크 필터, 원격 파일시스템, 미디어 등)은 뺐습니다 |
@@ -280,7 +285,7 @@ scripts/pico8-hashes.sh sign
 
 **하지 않은 것:**
 - Pi 4/5의 하드웨어 보안 부팅(secure boot): 보드 OTP에 한 번 쓰면 되돌릴 수 없어서 자동으로 켜지 않습니다.
-- 웹 페이지의 인라인 스크립트 때문에 CSP에 `'unsafe-inline'`이 남아 있습니다. 스크립트를 별도 파일로 옮기면 뺄 수 있습니다.
+- 부팅 시도 횟수를 부트로더 단계에서 세지 않습니다. 새 커널이 init까지 가지 못하면 자동 롤백이 동작하지 않습니다. 이때는 PICOBOOT의 `slot.txt`를 이전 슬롯으로 고쳐야 합니다(Pi 4/5의 `tryboot`로 옮기는 작업이 남아 있음).
 - 공인 인증서가 아닌 자체 서명 인증서라서, 처음 접속할 때 브라우저 경고가 나옵니다(가정 내 네트워크에서는 피할 수 없음).
 
 ## 부팅 속도
@@ -321,7 +326,7 @@ make docker-qemu
 ```
 
 - `--zip`은 PICO8DATA 파티션에 zip을 복사합니다. 이 스크립트는 `mtools`가 필요합니다(`sudo port install mtools`).
-- 웹 관리 페이지는 `http://localhost:8080`으로 열립니다.
+- 웹 관리 페이지는 `https://localhost:8443`으로 열립니다(이 컴퓨터에서만 접속 가능, 127.0.0.1에 바인딩).
 - 게스트가 재부팅하면 QEMU를 끝내고 `slot.txt`를 다시 읽어 부팅합니다(OTA 시험용).
 - `--fresh`는 깨끗한 이미지로 다시 시작합니다.
 - 이 터미널이 시리얼 콘솔입니다. 종료하려면 `Ctrl-A X`를 누르세요.
@@ -352,7 +357,7 @@ external/                     BR2_EXTERNAL (name: PICO8OS)
     etc/init.d/rc.late        2단계 부팅: S21 이상을 PICO-8과 동시에 시작
     usr/sbin/pico8os-debugsh  시리얼 콘솔 (DEBUG=on일 때만 root 셸)
     usr/bin/pico8-btpair      주변 게임패드 자동 페어링
-    etc/bluetooth/            BlueZ 설정 (AutoEnable, 재연결, ClassicBondedOnly=false)
+    etc/bluetooth/            BlueZ 설정 (AutoEnable, 재연결, ClassicBondedOnly=true)
     etc/wgetrc                Splore 다운로드 타임아웃
     etc/init.d/S06ota         새 슬롯 부팅 횟수 확인/되돌리기, 넣어 둔 업데이트 파일 설치
     etc/init.d/S80pico8os      웹 서버 + 설정 카트 에이전트

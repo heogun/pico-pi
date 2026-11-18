@@ -12,6 +12,8 @@
 #
 # Bundle (tar): manifest, manifest.sig (ECDSA P-256 over manifest),
 # cmdline.txt.in, boot.tar.gz (kernel, DTBs, overlays), rootfs.ext4.gz.
+# The manifest holds the sha256 of each member and of the uncompressed root
+# filesystem (rootfs_raw_sha256), which is checked on the written slot.
 # Switching slots rewrites one line on the boot partition: slot.txt
 # ("os_prefix=a/" or "os_prefix=b/"), read by the Pi firmware.
 #
@@ -21,7 +23,7 @@
 #   valid VER | updated VER | uptodate VER | available VER | downloading VER
 #   rolledback | error CODE [args]   (CODE: nofile notupdate unsigned badsig
 #   format board older corrupt nofit write bootmount bootfiles nourl
-#   unreachable badlatest download)
+#   unreachable badlatest download toolarge nospace busy verifywrite)
 . /usr/lib/pico8os/lib.sh
 load_config
 
@@ -33,7 +35,7 @@ MAX_TRIES=3
 
 log() { mkdir -p "$DATA/logs"; echo "$(date '+%F %T') $*" >> "$LOG"; }
 progress() { mkdir -p "$RUN"; printf '%s\n' "$*" > "$STATUS"; log "$*"; }
-die() { progress "error $*"; echo "pico8os-ota: error $*" >&2; [ -n "${WORK:-}" ] && rm -rf "$WORK"; exit 1; }
+die() { progress "error $*"; echo "pico8os-ota: error $*" >&2; exit 1; }   # cleanup: trap
 
 mount_boot() {
 	mkdir -p /boot
@@ -51,13 +53,69 @@ set_boot_slot() {
 
 manifest_get() { sed -n "s/^$1=//p" "$2" | head -n 1; }
 
-# verify FILE -> leaves the checked manifest in $WORK/manifest
+# ---- limits and locking ----
+OTA_LOCK="$RUN/ota.lock"
+BOOT_MAX_MB=64          # boot.tar.gz (kernel, DTBs, overlays)
+SMALL_MAX=65536         # manifest, signature, cmdline.txt.in, latest.txt
+DATA_RESERVE_MB=32      # keep this much of PICO8DATA free when downloading
+
+# One OTA operation at a time (web UI, settings cart and boot can all start
+# one). A lock left by a dead process is taken over.
+ota_lock() {
+	mkdir -p "$RUN"
+	if ! mkdir "$OTA_LOCK" 2>/dev/null; then
+		pid=$(cat "$OTA_LOCK/pid" 2>/dev/null)
+		if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then die busy; fi
+		rm -rf "$OTA_LOCK"; mkdir "$OTA_LOCK" 2>/dev/null || die busy
+	fi
+	echo $$ > "$OTA_LOCK/pid"
+	LOCKED=1
+}
+cleanup() {
+	[ -n "${WORK:-}" ] && { umount "$WORK" 2>/dev/null; rm -rf "$WORK"; }
+	[ -n "${LOCKED:-}" ] && rm -rf "$OTA_LOCK"
+	WORK= LOCKED=
+}
+trap cleanup EXIT
+trap 'exit 1' INT TERM
+
+# Root-only scratch space in RAM, size-limited: the private copies of the
+# small payloads live here, never on the user-writable data partition.
+work_new() {
+	mkdir -p "$RUN"
+	WORK=$(mktemp -d "$RUN/ota.XXXXXX") || die write
+	chmod 700 "$WORK"
+	mount -t tmpfs -o "size=$((BOOT_MAX_MB + 1))m,mode=0700,nosuid,nodev,noexec" tmpfs "$WORK" 2>/dev/null
+}
+
+target_part() { slot_part "$(other_slot "$(current_slot)")"; }
+part_bytes() { echo $(( $(cat "/sys/class/block/${1#/dev/}/size" 2>/dev/null || echo 0) * 512 )); }
+# Largest bundle that can be valid: a full slot plus the boot files.
+max_bundle() { echo $(( $(part_bytes "$(target_part)") + (BOOT_MAX_MB + 1) * 1048576 )); }
+file_bytes() { stat -c %s "$1" 2>/dev/null || echo 0; }
+
+# member BUNDLE NAME MAXBYTES OUT: private copy of one bundle member,
+# refused if larger than MAXBYTES.
+member() {
+	tar -xOf "$1" "$2" 2>/dev/null | head -c $(( $3 + 1 )) > "$4" || return 1
+	[ -s "$4" ] && [ "$(file_bytes "$4")" -le "$3" ]
+}
+sha_of() { sha256sum "$1" | cut -d' ' -f1; }
+is_sha() { case $1 in *[!0-9a-f]*) return 1 ;; esac; [ ${#1} = 64 ]; }
+
+# verify FILE [full]: check the signed manifest and take private, checked
+# copies of the small payloads into $WORK (manifest, cmdline.txt.in,
+# boot.tar.gz). Everything installed afterwards comes from these copies or,
+# for the root filesystem, is read back from the slot and compared with the
+# signed hash before the slot is used. "full" also hashes rootfs.ext4.gz in
+# the bundle, for an early answer on upload.
 verify() {
 	f=$1
-	[ -f "$f" ] || die nofile
-	WORK=$(mktemp -d)
-	tar -xOf "$f" manifest > "$WORK/manifest" 2>/dev/null || die notupdate
-	tar -xOf "$f" manifest.sig > "$WORK/manifest.sig" 2>/dev/null || die unsigned
+	[ -f "$f" ] && [ ! -L "$f" ] || die nofile
+	[ "$(file_bytes "$f")" -le "$(max_bundle)" ] || die toolarge
+	work_new
+	member "$f" manifest $SMALL_MAX "$WORK/manifest" || die notupdate
+	member "$f" manifest.sig 1024 "$WORK/manifest.sig" || die unsigned
 	openssl dgst -sha256 -verify "$PUBKEY" -signature "$WORK/manifest.sig" "$WORK/manifest" >/dev/null 2>&1 \
 		|| die badsig
 	[ "$(manifest_get format "$WORK/manifest")" = 1 ] || die format
@@ -68,83 +126,74 @@ verify() {
 	v=$(manifest_get version "$WORK/manifest")
 	[ "$v" \> "$(os_version)" ] || die older "$v" "$(os_version)"
 	progress checking
-	for part in rootfs boot cmdline; do
-		case $part in rootfs) m=rootfs.ext4.gz ;; boot) m=boot.tar.gz ;; cmdline) m=cmdline.txt.in ;; esac
-		want=$(manifest_get "${part}_sha256" "$WORK/manifest")
-		got=$(tar -xOf "$f" "$m" | sha256sum | cut -d' ' -f1)
-		[ -n "$want" ] && [ "$want" = "$got" ] || die corrupt "$m"
-	done
 	size=$(manifest_get rootfs_size "$WORK/manifest")
 	case $size in ''|*[!0-9]*) die format ;; esac
-	target=$(slot_part "$(other_slot "$(current_slot)")")
-	psize=$(( $(cat "/sys/class/block/${target#/dev/}/size" 2>/dev/null || echo 0) * 512 ))
-	[ "$size" -le "$psize" ] || die nofit
+	is_sha "$(manifest_get rootfs_raw_sha256 "$WORK/manifest")" || die format
+	[ "$size" -le "$(part_bytes "$(target_part)")" ] || die nofit
+	member "$f" cmdline.txt.in 4096 "$WORK/cmdline.txt.in" || die corrupt cmdline.txt.in
+	[ "$(sha_of "$WORK/cmdline.txt.in")" = "$(manifest_get cmdline_sha256 "$WORK/manifest")" ] || die corrupt cmdline.txt.in
+	member "$f" boot.tar.gz $((BOOT_MAX_MB * 1048576)) "$WORK/boot.tar.gz" || die corrupt boot.tar.gz
+	[ "$(sha_of "$WORK/boot.tar.gz")" = "$(manifest_get boot_sha256 "$WORK/manifest")" ] || die corrupt boot.tar.gz
+	if [ "${2:-}" = full ]; then
+		got=$(tar -xOf "$f" rootfs.ext4.gz | sha256sum | cut -d' ' -f1)
+		[ "$got" = "$(manifest_get rootfs_sha256 "$WORK/manifest")" ] || die corrupt rootfs.ext4.gz
+	fi
+}
+
+# write_rootfs BUNDLE PART: stream the root filesystem into the inactive
+# slot, then drop the page cache and read the slot back: only if its first
+# rootfs_size bytes match the signed rootfs_raw_sha256 is the slot used.
+# (A bundle changed while it is read can only leave a slot that fails this
+# check and is never booted.)
+write_rootfs() {
+	size=$(manifest_get rootfs_size "$WORK/manifest")
+	want=$(manifest_get rootfs_raw_sha256 "$WORK/manifest")
+	rm -f "$WORK"/rc.*
+	{ tar -xOf "$1" rootfs.ext4.gz; echo $? > "$WORK/rc.tar"; } \
+		| { gzip -dc; echo $? > "$WORK/rc.gzip"; } \
+		| { head -c "$size"; echo $? > "$WORK/rc.head"; } \
+		| { dd of="$2" bs=1M conv=fsync 2>/dev/null; echo $? > "$WORK/rc.dd"; }
+	for s in tar gzip head dd; do
+		[ "$(cat "$WORK/rc.$s" 2>/dev/null)" = 0 ] || die write "$2"
+	done
+	sync; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
+	got=$(head -c "$size" "$2" | sha256sum | cut -d' ' -f1)
+	[ "$got" = "$want" ] || die verifywrite "$2"
 }
 
 apply() {
 	f=$1
+	ota_lock
 	progress verifying
 	verify "$f"
 	ver=$(manifest_get version "$WORK/manifest")
 	cur=$(current_slot); new=$(other_slot "$cur"); part=$(slot_part "$new")
+	# Forget an update that was half-installed into this slot before.
+	rm -f "$STATE/pending"
 	progress writing "$ver" "$new"
-	tar -xOf "$f" rootfs.ext4.gz | gzip -dc | dd of="$part" bs=1M conv=fsync 2>/dev/null \
-		|| die write "$part"
+	write_rootfs "$f" "$part"
 	progress kernel "$new"
 	mount_boot || die bootmount
 	rm -rf "/boot/$new.new" && mkdir -p "/boot/$new.new"
-	tar -xOf "$f" boot.tar.gz | tar -xzf - -C "/boot/$new.new" || { umount_boot; die bootfiles; }
-	tar -xOf "$f" cmdline.txt.in | sed -e "s#@ROOT@#$part#" -e "s#@SLOT@#$new#" > "/boot/$new.new/cmdline.txt"
+	tar -xzf "$WORK/boot.tar.gz" -C "/boot/$new.new" || { umount_boot; die bootfiles; }
+	sed -e "s#@ROOT@#$part#" -e "s#@SLOT@#$new#" "$WORK/cmdline.txt.in" > "/boot/$new.new/cmdline.txt" \
+		|| { umount_boot; die bootfiles; }
 	sync
-	rm -rf "/boot/$new" && mv "/boot/$new.new" "/boot/$new"
+	rm -rf "/boot/$new" && mv "/boot/$new.new" "/boot/$new" || { umount_boot; die bootfiles; }
 	umount_boot
 	mkdir -p "$STATE"
-	printf 'slot=%s\nprevious=%s\nversion=%s\ntries=0\n' "$new" "$cur" "$ver" > "$STATE/pending"
-	sync
+	printf 'slot=%s\nprevious=%s\nversion=%s\ntries=0\n' "$new" "$cur" "$ver" > "$STATE/pending.new"
+	sync; mv "$STATE/pending.new" "$STATE/pending"; sync
 	set_boot_slot "$new"
-	rm -rf "$WORK"
 	progress ready "$ver"
 }
 
 boot_check() {
-	[ -f "$STATE/pending" ] || return 0
-	slot=$(manifest_get slot "$STATE/pending")
-	prev=$(manifest_get previous "$STATE/pending")
-	tries=$(manifest_get tries "$STATE/pending")
-	if [ "$(current_slot)" != "$slot" ]; then
-		# Firmware booted the old slot (manual revert): forget the update.
-		log "pending slot $slot not running; dropping update"
-		rm -f "$STATE/pending"; sync; return 0
-	fi
-	tries=$((tries + 1))
-	if [ "$tries" -gt "$MAX_TRIES" ]; then
-		log "slot $slot failed $MAX_TRIES boots: rolling back to $prev"
-		rm -f "$STATE/pending"; sync
-		set_boot_slot "$prev"
-		reboot; return 0
-	fi
-	# Rewrite + rename: a power cut never leaves a half-written counter.
-	printf 'slot=%s\nprevious=%s\nversion=%s\ntries=%s\n' "$slot" "$prev" \
-		"$(manifest_get version "$STATE/pending")" "$tries" > "$STATE/pending.new"
-	sync; mv "$STATE/pending.new" "$STATE/pending"; sync
-	log "booting new slot $slot (try $tries/$MAX_TRIES)"
-}
-
-mark_good() {
-	[ -f "$STATE/pending" ] || return 0
-	ver=$(manifest_get version "$STATE/pending")
-	rm -f "$STATE/pending"; sync
-	progress updated "$ver"
-}
-
-# OTA_URL/latest-<board>.txt:  version=...  url=...  (url may be relative to
-# OTA_URL). Flat, so a GitHub Release works as the server:
-#   OTA_URL=https://github.com/<user>/<repo>/releases/latest/download
-check() {
 	[ -n "$OTA_URL" ] || die nourl
 	mkdir -p "$RUN"
-	wget -q -O "$RUN/latest.txt" "${OTA_URL%/}/latest-$(os_board).txt" || die unreachable
-	v=$(manifest_get version "$RUN/latest.txt")
+	wget -q -T 30 -O - "${OTA_URL%/}/latest-$(os_board).txt" 2>/dev/null | head -c $SMALL_MAX > "$RUN/latest.txt"
+	[ -s "$RUN/latest.txt" ] || die unreachable
+	v=$(manifest_get version "$RUN/latest.txt" | tr -cd '0-9A-Za-z.:_-' | head -c 64)
 	[ -n "$v" ] || die badlatest
 	if [ "$v" \> "$(os_version)" ]; then
 		echo "$v" > "$RUN/ota.available"; progress available "$v"
@@ -153,15 +202,25 @@ check() {
 	fi
 }
 
+# Download into PICO8DATA/ota/, never more than a valid bundle can be and
+# never filling the data partition.
 download() {
 	check
 	[ -f "$RUN/ota.available" ] || return 0
 	u=$(manifest_get url "$RUN/latest.txt")
 	case $u in http://*|https://*) ;; *) u="${OTA_URL%/}/$u" ;; esac
 	mkdir -p "$DATA/ota"
+	free=$(( $(df -k "$DATA" | awk 'NR == 2 {print $4}') * 1024 - DATA_RESERVE_MB * 1048576 ))
+	max=$(max_bundle); [ "$free" -lt "$max" ] && max=$free
+	[ "$max" -gt 0 ] || die nospace
 	progress downloading "$(cat "$RUN/ota.available")"
-	wget -q -O "$DATA/ota/download.pico8os-update.part" "$u" || die download
-	mv "$DATA/ota/download.pico8os-update.part" "$DATA/ota/download.pico8os-update"
+	part="$DATA/ota/download.pico8os-update.part"
+	rm -f "$part"
+	wget -q -T 60 -O - "$u" 2>/dev/null | head -c $((max + 1)) > "$part"
+	n=$(file_bytes "$part")
+	[ "$n" -gt 0 ] || { rm -f "$part"; die download; }
+	[ "$n" -le "$max" ] || { rm -f "$part"; die toolarge; }
+	mv "$part" "$DATA/ota/download.pico8os-update"
 	sync
 	echo "$DATA/ota/download.pico8os-update"
 }
@@ -179,14 +238,15 @@ status() {
 case ${1:-} in
 	status) status ;;
 	verify)
-		progress verifying; verify "${2:?file}"
-		v=$(manifest_get version "$WORK/manifest"); rm -rf "$WORK"; progress valid "$v" ;;
+		ota_lock; progress verifying; verify "${2:?file}" full
+		progress valid "$(manifest_get version "$WORK/manifest")" ;;
 	apply) apply "${2:?file}" ;;
 	check) check ;;
-	download) download ;;
+	download) ota_lock; download ;;
 	boot-check) boot_check ;;
 	mark-good) mark_good ;;
 	rollback)
+		ota_lock
 		set_boot_slot "$(other_slot "$(current_slot)")"; rm -f "$STATE/pending"; sync
 		progress rolledback ;;
 	*) sed -n '2,13s/^# \{0,1\}//p' "$0"; exit 2 ;;

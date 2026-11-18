@@ -1,29 +1,37 @@
 #!/bin/sh
 # PICO8-OS agent (root). Two jobs:
 #
-# 1. Settings cart bridge. The cart (carts/pico8os/pico8os.p8) appends
+# 1. Settings cart bridge. The cart (pico8os.p8) appends
 #      printh("<seq> <command>", "pico8os_req.txt")
 #    and reads pico8os_status.p8, a cart whose sprite sheet holds
-#    "key=value" text, via reload(). Both live in /run/pico8os/cart (tmpfs,
-#    bind-mounted on carts/pico8os) so polling never writes the SD card.
-#    PICO-8 runs as the unprivileged pico user and also runs carts from the
-#    internet, so requests are only accepted, and the status (which contains
-#    the web password) is only written, while the settings cart was started
-#    by the system ($RUN/settings-active, set by pico8-session as root).
+#    "key=value" text, via reload(). pico8-session runs that cart as its own
+#    user, pico8cfg, from a fresh copy in $CFG_CARTS (tmpfs, pico8cfg 0700),
+#    so ordinary carts (user pico) can neither change it, nor send requests,
+#    nor read the status (which contains the web password). Requests are
+#    also only taken while the system started the settings cart
+#    ($RUN/settings-active, set by pico8-session as root).
+#    Root never opens a path inside that folder: a request is renamed into
+#    the root-only $WORK first and checked there; the status is built in
+#    $WORK and renamed into place (rename replaces a planted link, it never
+#    follows it).
 #    Commands: refresh | set KEY VALUE | pair | wifi_scan | wifi IDX [PSK]
 #              ota_check | ota_install | restart | exit | reboot | poweroff
 #    Status "msg" is "<key> <arg>": the cart translates m_<key>; key "ota"
 #    carries an OTA status line ("<code> [args]") translated as o_<code>.
 #
 # 2. Privileged actions for the web UI (which runs as www): requests dropped
-#    into $RUN/priv (root:www 0730) by priv() in lib.sh; only the commands in
-#    priv_run are accepted, each with its arguments validated.
+#    into $PRIV_DIR (root:www 0730) by priv() in lib.sh are renamed into
+#    $WORK and checked there; answers are written in $WORK and renamed into
+#    $PRIV_ANS (root:www 0750), where www can read but not create anything.
+#    Only the commands in priv_run are accepted, each argument validated.
 . /usr/lib/pico8os/lib.sh
-CART_DIR="$RUN/cart"
-MNT="$DATA/carts/pico8os"
+WORK="$RUN/agent"                 # root 0700
+CFG_CARTS="$RUN/cfg/carts"        # pico8cfg 0700, made by pico8-session
 ACTIVE_FLAG="$RUN/settings-active"
 MSG=""
 SEQ=0
+CFG_UID=$(id -u pico8cfg 2>/dev/null || echo 1002)
+WWW_UID=$(id -u www 2>/dev/null || echo 1001)
 
 # Text -> PICO-8 __gfx__ (each byte = two pixels, low nibble first),
 # NUL-terminated, max 8 KB.
@@ -34,9 +42,27 @@ gfx_encode() {
 		END { s = s "00"; while (length(s) < 128) s = s "0"; print s }'
 }
 
+# take SRC UID: rename a file another user wrote into the root-only $WORK
+# and check it there (plain file, owned by UID). Prints the path of a
+# private copy of its first 8 KB.
+take() {
+	[ -e "$1" ] || [ -L "$1" ] || return 1
+	t="$WORK/in.$$.$(od -An -N4 -tx4 /dev/urandom | tr -d ' ')"
+	mv "$1" "$t" 2>/dev/null || return 1
+	if [ -L "$t" ] || [ ! -f "$t" ] || [ "$(stat -c %u "$t")" != "$2" ]; then
+		rm -f "$t"; return 1
+	fi
+	head -c 8192 "$t" | tr -d '\r\000' > "$t.txt"
+	rm -f "$t"
+	echo "$t.txt"
+}
+
+# place SRC DEST GROUP: publish a file built in $WORK (mode 0640, GROUP).
+place() { chgrp "$3" "$1" && chmod 0640 "$1" && mv -f "$1" "$2"; }
+
 write_status() {
-	if [ ! -f "$ACTIVE_FLAG" ]; then
-		rm -f "$CART_DIR/pico8os_status.p8"   # no password for other carts
+	if [ ! -f "$ACTIVE_FLAG" ] || [ ! -d "$CFG_CARTS" ] || [ -L "$CFG_CARTS" ]; then
+		[ -d "$CFG_CARTS" ] && rm -f "$CFG_CARTS/pico8os_status.p8"
 		return
 	fi
 	load_config
@@ -54,7 +80,7 @@ write_status() {
 		echo "ver=$(os_version)"
 		echo "slot=$(current_slot)"
 		echo "ip=${ip:--}"
-		echo "web=${ip:+http://$ip}"
+		echo "web=${ip:+https://$ip}"
 		echo "pw=$(web_password)"
 		echo "wifi=$wifi"
 		echo "appw=$([ -f "$RUN/ap-mode" ] && ap_password)"
@@ -66,31 +92,49 @@ write_status() {
 		echo "ota=$ota"
 		echo "avail=$(cat "$RUN/ota.available" 2>/dev/null)"
 		echo "msg=$MSG"
-	} | tr -cd '\n -~' > "$CART_DIR/.status.txt"
+	} | tr -cd '\n -~' > "$WORK/status.txt"
 	{
 		printf 'pico-8 cartridge // http://www.pico-8.com\nversion 41\n__gfx__\n'
-		gfx_encode < "$CART_DIR/.status.txt"
-	} > "$CART_DIR/.pico8os_status.p8" && mv "$CART_DIR/.pico8os_status.p8" "$CART_DIR/pico8os_status.p8"
-	rm -f "$CART_DIR/.status.txt"
+		gfx_encode < "$WORK/status.txt"
+	} > "$WORK/status.p8"
+	rm -f "$WORK/status.txt"
+	place "$WORK/status.p8" "$CFG_CARTS/pico8os_status.p8" pico8cfg || rm -f "$WORK/status.p8"
+}
+
+# Shared settings (PICO8DATA) are written as the pico user, which owns that
+# partition anyway: root never writes where carts can plant links.
+set_user_conf() {
+	su -s /bin/sh pico -c '. /usr/lib/pico8os/lib.sh; set_conf "$0" "$1"' "$1" "$2" >/dev/null 2>&1
+}
+
+# valid_user_value KEY VALUE (keys the settings cart may change)
+valid_cart_setting() {
+	case $1 in
+		LANGUAGE) case $2 in en|ko|zh|ja|fr|es|ru|it|de) return 0 ;; esac ;;
+		KEYMAP) case $2 in ''|*[!A-Za-z0-9_-]*) ;; *) return 0 ;; esac ;;
+		PICO8_MODE) case $2 in splore|editor|run) return 0 ;; esac ;;
+		EXIT_ACTION) case $2 in restart|poweroff|shell) return 0 ;; esac ;;
+	esac
+	return 1
 }
 
 handle() {
 	set -f; set -- $1; set +f
-	case $1 in ''|*[!0-9]*) return ;; esac
+	case ${1:-} in ''|*[!0-9]*) return ;; esac
 	SEQ=$1; cmd=${2:-}; shift 2 2>/dev/null
 	case $cmd in
 		refresh) ;;
 		set)
-			k=$1; shift; v="$*"
-			case $k in LANGUAGE|KEYMAP|PICO8_MODE|EXIT_ACTION) ;; *) MSG="error"; return ;; esac
-			if set_conf "$k" "$v"; then MSG="saved"; else MSG="error"; fi ;;
+			k=${1:-}; shift; v="$*"
+			if valid_cart_setting "$k" "$v" && set_user_conf "$k" "$v"; then MSG="saved"; else MSG="error"; fi ;;
 		pair) ( pico8-btpair 90 >/dev/null 2>&1 & ); MSG="pairing" ;;
 		wifi_scan) pico8os-wifi scan >/dev/null 2>&1; MSG="scandone" ;;
 		wifi)
-			idx=$1; shift
+			idx=${1:-}; shift
 			case $idx in ''|*[!0-9]*) MSG="notfound"; return ;; esac
 			ssid=$(sed -n "${idx}p" "$RUN/wifi-scan.txt" 2>/dev/null)
 			if [ -z "$ssid" ]; then MSG="notfound"
+			elif ! valid_wifi "$ssid" "$*" ""; then MSG="error"
 			else
 				set_conf WIFI_SSID "$ssid"; set_conf WIFI_PSK "$*"
 				( pico8os-wifi restart >/dev/null 2>&1 & ); MSG="connecting $ssid"
@@ -106,41 +150,65 @@ handle() {
 	esac
 }
 
-# Cart request files are written by the pico user: refuse anything that is
-# not a plain file (a symlink could point root at another file).
 take_cart_requests() {
-	for req in "$CART_DIR/pico8os_req.txt" "$DATA/carts/pico8os_req.txt"; do
-		[ -e "$req" ] || continue
-		if [ -L "$req" ] || [ ! -f "$req" ] || [ ! -f "$ACTIVE_FLAG" ]; then
-			rm -f "$req"; continue
-		fi
-		mv "$req" "$req.work" 2>/dev/null || continue
-		[ -L "$req.work" ] && { rm -f "$req.work"; continue; }
-		head -c 4096 "$req.work" | while IFS= read -r line || [ -n "$line" ]; do
-			printf '%s\n' "$line" | tr -d '\r'
-		done > "$RUN/.cart-req"
-		rm -f "$req.work"
-		while IFS= read -r line; do handle "$line"; done < "$RUN/.cart-req"
-		rm -f "$RUN/.cart-req"
-		write_status
-		active=60     # the cart is open: keep its status fresh for 30 s
-	done
+	[ -d "$CFG_CARTS" ] && [ ! -L "$CFG_CARTS" ] || return 0
+	req="$CFG_CARTS/pico8os_req.txt"
+	[ -e "$req" ] || [ -L "$req" ] || return 0
+	if [ ! -f "$ACTIVE_FLAG" ]; then rm -f "$req"; return 0; fi
+	r=$(take "$req" "$CFG_UID") || return 0
+	while IFS= read -r line; do handle "$line"; done < "$r"
+	rm -f "$r"
+	write_status
+	active=60     # the cart is open: keep its status fresh for 30 s
 }
 
 valid_mac() { printf '%s' "$1" | grep -q -E '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'; }
 
+# valid_wifi SSID PSK COUNTRY: printable SSID of 1-32 bytes, PSK empty
+# (open network) or 8-63 characters, country empty or two letters.
+valid_wifi() {
+	n=$(printf '%s' "$1" | wc -c)
+	[ "$n" -ge 1 ] && [ "$n" -le 32 ] || return 1
+	if [ -n "$2" ]; then n=$(printf '%s' "$2" | wc -c); [ "$n" -ge 8 ] && [ "$n" -le 63 ] || return 1; fi
+	case $3 in ''|[A-Z][A-Z]) ;; *) return 1 ;; esac
+	case "$1$2" in *"'"*'"'*|*'"'*"'"*) return 1 ;; esac   # set_conf cannot store both quotes
+	return 0
+}
+
 # priv_run REQFILE: one web UI request (line 1 = command, then arguments)
 priv_run() {
-	reqfile=$1
 	set --
-	while IFS= read -r l || [ -n "$l" ]; do set -- "$@" "$l"; done < "$reqfile"
+	while IFS= read -r l || [ -n "$l" ]; do set -- "$@" "$l"; done < "$1"
 	cmd=${1:-}; [ $# -gt 0 ] && shift
 	case $cmd in
 		apply)
 			for k in "$@"; do
-				case " $CONF_KEYS " in *" $k "*) ;; *) echo "bad key"; return 2 ;; esac
+				has_word "$USER_KEYS" "$k" || { echo "bad key"; return 2; }
 			done
 			pico8os-apply "$@" ;;
+		set_policy)    # KEY VALUE (logged-in web UI only)
+			[ $# = 2 ] || return 2
+			case $1 in
+				DEBUG) case $2 in on|off) ;; *) return 2 ;; esac ;;
+				PICO8_VERIFY) case $2 in strict|warn) ;; *) return 2 ;; esac ;;
+				WEB_PASSWORD)
+					n=$(printf '%s' "$2" | wc -c)
+					{ [ "$n" = 0 ] || { [ "$n" -ge 8 ] && [ "$n" -le 64 ]; }; } || { echo "length"; return 2; } ;;
+				*) return 2 ;;
+			esac
+			set_conf "$1" "$2" || return 2
+			pico8os-apply "$1" ;;
+		get_policy)    # never prints the password itself
+			load_config
+			echo "DEBUG=$DEBUG"
+			echo "PICO8_VERIFY=$PICO8_VERIFY"
+			echo "WEB_PASSWORD=$([ -n "$WEB_PASSWORD" ] && echo set || echo generated)" ;;
+		wifi_set)      # SSID PSK COUNTRY (also from the Wi-Fi setup page)
+			[ $# = 3 ] || return 2
+			valid_wifi "$1" "$2" "$3" || { echo "invalid"; return 2; }
+			set_conf WIFI_SSID "$1" && set_conf WIFI_PSK "$2" || return 2
+			[ -n "$3" ] && set_conf WIFI_COUNTRY "$3"
+			( sleep 2; pico8os-wifi restart >/dev/null 2>&1 ) & ;;
 		restart_pico8)
 			case ${1:-} in
 				'') restart_pico8 ;;
@@ -173,27 +241,28 @@ priv_run() {
 
 take_priv_requests() {
 	for req in "$PRIV_DIR"/*.req; do
-		[ -f "$req" ] && [ ! -L "$req" ] || continue
-		id=${req%.req}
-		mv "$req" "$id.work" 2>/dev/null || continue
+		[ -e "$req" ] || [ -L "$req" ] || continue
+		id=${req##*/}; id=${id%.req}
+		case $id in ''|*[!0-9a-f.]*) rm -f "$req"; continue ;; esac
+		r=$(take "$req" "$WWW_UID") || continue
 		(
-			umask 022
-			priv_run "$id.work" > "$id.out" 2>&1
-			echo $? > "$id.done.tmp"
-			mv "$id.done.tmp" "$id.done"
-			rm -f "$id.work"
+			umask 077
+			{ priv_run "$r"; echo $? > "$r.rc"; } 2>&1 | head -c 1048576 > "$WORK/$id.out"
+			rc=$(cat "$r.rc" 2>/dev/null); echo "${rc:-1}" > "$WORK/$id.done"
+			rm -f "$r" "$r.rc"
+			place "$WORK/$id.out" "$PRIV_ANS/$id.out" www
+			place "$WORK/$id.done" "$PRIV_ANS/$id.done" www
 		) &
 	done
-	# answers nobody fetched (client gave up)
-	find "$PRIV_DIR" -type f -mmin +10 -exec rm -f {} \; 2>/dev/null
+	# answers nobody fetched (client gave up), stray request files
+	find "$PRIV_ANS" "$PRIV_DIR" -type f -mmin +5 -exec rm -f {} \; 2>/dev/null
 }
 
 setup() {
-	mkdir -p "$CART_DIR" "$MNT" "$PRIV_DIR"
-	cp /usr/share/pico8os/cart/*.p8 "$CART_DIR/"
-	chown pico:pico "$CART_DIR"       # PICO-8 (pico) writes its requests here
-	chown root:www "$PRIV_DIR"; chmod 0730 "$PRIV_DIR"
-	mountpoint -q "$MNT" || mount --bind "$CART_DIR" "$MNT"
+	mkdir -p "$RUN" "$WORK" "$PRIV_DIR" "$PRIV_ANS"
+	chown root:root "$WORK"; chmod 0700 "$WORK"
+	rm -f "$WORK"/* "$PRIV_ANS"/* 2>/dev/null
+	chown root:www "$PRIV_DIR" "$PRIV_ANS"; chmod 0730 "$PRIV_DIR"; chmod 0750 "$PRIV_ANS"
 	write_status
 }
 

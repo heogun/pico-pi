@@ -2,7 +2,8 @@
 # Mount the writable partitions. Boot (p1) is never mounted and the root (p2)
 # stays read-only.
 #   p5 PICO8DATA (FAT32) -> /data   settings, carts, saves, logs
-#   p6 picostate (ext4)  -> /state  Bluetooth pairings, OTA state
+#   p6 picostate (ext4)  -> /state  root only: Bluetooth pairings, OTA state,
+#                                   security policy, Wi-Fi, web password
 # (p2/p3 are the A/B system slots, p4 the extended partition.)
 mount_data() {
 	for dev in /dev/mmcblk0p5 /dev/vda5; do
@@ -16,6 +17,10 @@ mount_data() {
 	done
 	echo "S05picodata: data partition not found, using tmpfs" >&2
 	mount -t tmpfs -o size=64m,nosuid,nodev,noexec,uid=1000,gid=1001,mode=0770 tmpfs /data
+	# tmpfs allows symlinks (FAT does not): keep the logs root writes to
+	# out of the users' reach.
+	mkdir -p /data/carts /data/screenshots /data/pico8 /data/logs
+	chown root:www /data/logs; chmod 0750 /data/logs
 }
 
 mount_state() {
@@ -25,14 +30,21 @@ mount_state() {
 		mount -t ext4 -o rw,noatime,commit=5,nosuid,nodev,noexec "$dev" /state && break
 	done
 	mountpoint -q /state || mount -t tmpfs -o size=4m,nosuid,nodev,noexec tmpfs /state
+	# Nobody but root needs /state (passwords, policy, pairing keys).
+	chown root:root /state; chmod 0700 /state
 	mkdir -p /state/bluetooth /state/ota
-	chmod 700 /state/bluetooth
+	chmod 700 /state/bluetooth /state/ota
+	chmod 600 /state/web-password /state/ap-password 2>/dev/null
 }
 
 case "$1" in
 	start)
 		mountpoint -q /data || mount_data
 		mountpoint -q /state || mount_state
+		# Policy and Wi-Fi settings: root-only files on /state (lib.sh)
+		. /usr/lib/pico8os/lib.sh
+		mkdir -p "$RUN"; chmod 0755 "$RUN"
+		secure_settings_init
 		;;
 	stop)
 		sync

@@ -7,9 +7,10 @@
 # log in to download from a private one).
 #
 # OTA signing: set the repository secret OTA_PRIVATE_KEY to the contents of
-# keys/ota-private.pem (`make keys`, then `gh secret set OTA_PRIVATE_KEY <
-# keys/ota-private.pem`). Without it, manual builds use a throw-away key
-# (their consoles can never take OTA updates); tag builds refuse to run.
+# keys/ota-private.pem (`gh secret set OTA_PRIVATE_KEY < keys/ota-private.pem`);
+# it must match keys/ota-public.pem in git. The key is only given to the
+# "sign" job, never to the build jobs. Without it, manual builds produce
+# unsigned OTA bundles; tag builds refuse to publish.
 name: build
 
 on:
@@ -107,25 +108,11 @@ jobs:
           key: ccache-${{ matrix.board }}-${{ github.run_id }}
           restore-keys: ccache-${{ matrix.board }}-
 
-      - name: OTA signing key
-        env:
-          OTA_PRIVATE_KEY: ${{ secrets.OTA_PRIVATE_KEY }}
-          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
-        run: |
-          set -eu
-          mkdir -p keys
-          if [ -n "$OTA_PRIVATE_KEY" ]; then
-            umask 077
-            printf '%s\n' "$OTA_PRIVATE_KEY" > keys/ota-private.pem
-            openssl ec -in keys/ota-private.pem -pubout -out keys/ota-public.pem 2>/dev/null
-            echo "Using OTA key from the OTA_PRIVATE_KEY secret"
-          elif [ "$IS_TAG" = true ]; then
-            echo "::error::Release builds need the OTA_PRIVATE_KEY secret (see the comment at the top of build.yml)"
-            exit 1
-          else
-            make keys
-            echo "::warning::No OTA_PRIVATE_KEY secret: built with a throw-away key. Consoles flashed with these images cannot install OTA updates."
-          fi
+      # No signing key here: the build runs third-party code (Buildroot and
+      # every package it downloads). Images carry keys/ota-public.pem from
+      # git; the OTA bundles stay unsigned until the "sign" job.
+      - name: Check the OTA public key
+        run: test -s keys/ota-public.pem && test ! -e keys/ota-private.pem
 
       - name: Build ${{ matrix.board }}
         run: |
@@ -140,27 +127,77 @@ jobs:
           upd="pico8os-$BOARD-$PICO8OS_VERSION.pico8os-update"
           cp "dist/$upd" upload/
           printf 'version=%s\nurl=%s\n' "$PICO8OS_VERSION" "$upd" > "upload/latest-$BOARD.txt"
-          (cd upload && sha256sum * > "SHA256SUMS-$BOARD")
           ls -la upload
 
       - uses: actions/upload-artifact@v4
         with:
-          name: pico8os-${{ matrix.board }}-${{ needs.setup.outputs.version }}
+          name: unsigned-${{ matrix.board }}-${{ needs.setup.outputs.version }}
+          path: upload/*
+          compression-level: 0
+          retention-days: 3
+
+  # Signs the OTA bundles. Only this job sees OTA_PRIVATE_KEY, and it runs
+  # nothing from the build except reading its output files.
+  sign:
+    needs: [setup, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/sign-update.sh
+            keys/ota-public.pem
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: unsigned-*
+          path: upload
+          merge-multiple: true
+
+      - name: Sign
+        env:
+          OTA_PRIVATE_KEY: ${{ secrets.OTA_PRIVATE_KEY }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          set -eu
+          if [ -n "$OTA_PRIVATE_KEY" ]; then
+            key=$(mktemp); trap 'rm -f "$key"' EXIT
+            printf '%s\n' "$OTA_PRIVATE_KEY" > "$key"
+            # must match the public key the images were built with
+            openssl ec -in "$key" -pubout 2>/dev/null | cmp -s - keys/ota-public.pem \
+              || { echo "::error::OTA_PRIVATE_KEY does not match keys/ota-public.pem"; exit 1; }
+            for f in upload/*.pico8os-update; do scripts/sign-update.sh "$f" "$key"; done
+          elif [ "$IS_TAG" = true ]; then
+            echo "::error::Release builds need the OTA_PRIVATE_KEY secret (see the comment at the top of build.yml)"
+            exit 1
+          else
+            echo "::warning::No OTA_PRIVATE_KEY secret: the OTA bundles are unsigned and no console will install them."
+          fi
+          for b in upload/latest-*.txt; do
+            b=${b#upload/latest-}; b=${b%.txt}
+            (cd upload && sha256sum pico8os-"$b"-* "latest-$b.txt" > "SHA256SUMS-$b")
+          done
+          ls -la upload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pico8os-${{ needs.setup.outputs.version }}
           path: upload/*
           compression-level: 0
           retention-days: 14
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [setup, build]
+    needs: [setup, sign]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
+          name: pico8os-${{ needs.setup.outputs.version }}
           path: release
-          merge-multiple: true
 
       - name: Create release
         env:

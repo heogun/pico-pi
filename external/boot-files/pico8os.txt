@@ -35,12 +35,29 @@ WATCHDOG=on
 HOTKEY=on
 
 # Bluetooth controllers (on | off). Paired controllers reconnect by
-# themselves. For BT_PAIR_SECONDS after every boot (and 90 s after
-# Ctrl+Alt+P) nearby controllers in pairing mode are paired automatically:
+# themselves. To pair one, press Ctrl+Alt+P (or use the settings screen or
+# web UI) and put the controller in pairing mode within 90 s; the first
+# controller found is paired and the window closes. BT_PAIR_SECONDS > 0
+# also opens such a window after every boot (off by default: anyone nearby
+# could pair then).
 #   PS4/PS5: hold SHARE/CREATE + PS   Switch Pro/Joy-Con: SYNC button
 #   Xbox One/Series: hold the pair button   8BitDo: its pairing combo
 BLUETOOTH=on
-BT_PAIR_SECONDS=60
+BT_PAIR_SECONDS=0
+
+# Online updates: <OTA_URL>/latest-<board>.txt (see README). Empty = off.
+# GitHub Releases: https://github.com/<user>/<repo>/releases/latest/download
+OTA_URL=
+
+# CPU frequency policy while playing: performance | ondemand | schedutil
+CPU_GOVERNOR=performance
+
+# ---- Read on the FIRST boot only ----
+# The settings below (Wi-Fi, web password, PICO8_VERIFY, DEBUG) are moved
+# into the console's protected storage on the first boot and removed from
+# this file, so games cannot read or change them. Later, change them in
+# the web UI, or put a file named pico8os-setup.txt with the same lines on
+# the PICOBOOT drive: it is read (and deleted) at the next boot.
 
 # Wi-Fi for Splore (Pi Zero W, 3, 4, 5). Ethernet works without settings.
 WIFI_SSID=
@@ -51,17 +68,10 @@ WIFI_COUNTRY=KR
 # in the settings screen (Ctrl+Alt+S, or hold SELECT for 2 s).
 WEB_PASSWORD=
 
-# Online updates: <OTA_URL>/latest-<board>.txt (see README). Empty = off.
-# GitHub Releases: https://github.com/<user>/<repo>/releases/latest/download
-OTA_URL=
-
 # Only install PICO-8 builds on PICO8-OS's signed list of verified builds
 # (strict), or also unlisted versions with a warning (warn). Damaged or
 # modified files are always refused.
 PICO8_VERIFY=strict
-
-# CPU frequency policy while playing: performance | ondemand | schedutil
-CPU_GOVERNOR=performance
 
 # Root shell on the serial console and tty1 for troubleshooting (on | off).
 # Leave off: anyone with the console then has full control.

@@ -141,31 +141,54 @@ setup_audio
 setup_cpu
 export HOME="$DATA"
 
-set -- -home "$DATA/pico8" -root_path "$DATA/carts" -desktop "$DATA/screenshots"
+# Settings cart: its own account (pico8cfg) and its own folders on tmpfs,
+# freshly copied from the read-only system each time, so ordinary carts
+# (pico) can neither change its code nor reach its request channel or the
+# status it receives (which holds the web password). See pico8os-agent.
+#   $RUN/cfg/carts  pico8cfg 0700: the carts, requests, status
+#   $RUN/cfg/home   pico8cfg 0700: PICO-8 home
+start_settings() {
+	cfg="$RUN/cfg"
+	rm -rf "$cfg" && mkdir -p "$cfg/carts" "$cfg/home" || return 1
+	chmod 0755 "$cfg"
+	cp /usr/share/pico8os/cart/*.p8 "$cfg/carts/" || return 1
+	# the user's controller mappings (plain data) so a pad can drive it
+	db="$DATA/pico8/sdl_controllers.txt"
+	[ -f "$db" ] && [ ! -L "$db" ] && head -c 262144 "$db" > "$cfg/home/sdl_controllers.txt"
+	chown -R pico8cfg:pico8cfg "$cfg/carts" "$cfg/home"
+	chmod 0700 "$cfg/carts" "$cfg/home"
+}
+
+USER_RUN=pico
 # One-shot: open the PICO8-OS settings cart (hotkey, web UI) instead.
 next=$(cat "$RUN/next-cart" 2>/dev/null); rm -f "$RUN/next-cart"
-SETTINGS_CART="$DATA/carts/pico8os/pico8os.p8"
 rm -f "$RUN/settings-active"
-if [ "$next" = settings ] && [ -f "$SETTINGS_CART" ]; then
-	PICO8_MODE=settings
-	set -- "$@" -run "$SETTINGS_CART"
+if [ "$next" = settings ] && start_settings; then
+	# never the user's PICO8_ARGS or mode here: they are writable by carts
+	USER_RUN=pico8cfg
+	set -- -home "$RUN/cfg/home" -root_path "$RUN/cfg/carts" -desktop "$RUN/cfg/home" \
+		-run "$RUN/cfg/carts/pico8os.p8"
 	# lets pico8os-agent accept this cart's requests (see pico8os-agent)
 	: > "$RUN/settings-active"
+else
+	set -- -home "$DATA/pico8" -root_path "$DATA/carts" -desktop "$DATA/screenshots"
+	case $PICO8_MODE in
+		splore) set -- "$@" -splore ;;
+		run) [ -n "$PICO8_CART" ] && set -- "$@" -run "$DATA/carts/$PICO8_CART" ;;
+	esac
+	# shellcheck disable=SC2086  # PICO8_ARGS is intentionally word-split
+	set -- "$@" $PICO8_ARGS
 fi
-case $PICO8_MODE in
-	splore) set -- "$@" -splore ;;
-	run) [ -n "$PICO8_CART" ] && set -- "$@" -run "$DATA/carts/$PICO8_CART" ;;
-esac
-# shellcheck disable=SC2086  # PICO8_ARGS is intentionally word-split
-set -- "$@" $PICO8_ARGS
 
 clear
 cd "$PICO8_DIR" || exit 1
 log_boot_time
 started=$(date +%s)
-# Drop to the pico user (video/render/input/audio groups). su keeps the
-# environment (-p) and execs, so PICO-8's exit status comes back unchanged.
-su -p -s /bin/sh pico -c 'exec "$0" "$@"' "$PICO8_DIR/$bin" "$@" >>"$LOG" 2>&1
+# Drop to the pico (or pico8cfg) user (video/render/input/audio groups). su
+# keeps the environment (-p) and execs, so PICO-8's exit status comes back
+# unchanged.
+[ "$USER_RUN" = pico8cfg ] && export HOME="$RUN/cfg/home"
+su -p -s /bin/sh "$USER_RUN" -c 'exec "$0" "$@"' "$PICO8_DIR/$bin" "$@" >>"$LOG" 2>&1
 rc=$?
 ran=$(( $(date +%s) - started ))
 rm -f "$RUN/settings-active"
