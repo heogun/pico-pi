@@ -48,7 +48,7 @@
 #   rolledback | error CODE [args]   (CODE: nofile notupdate unsigned badsig
 #   format board older corrupt nofit write bootmount bootfiles nourl
 #   unreachable badlatest download toolarge nospace busy verifywrite noslot
-#   state bootfailed)
+#   state bootfailed cancelfailed)
 . /usr/lib/pico8os/lib.sh
 load_config
 
@@ -124,15 +124,21 @@ tryboot_files() {
 		|| { rm -f /boot/tryboot.txt.new /boot/tryslot.txt.new; return 1; }
 }
 # tryboot_disarm: a tryboot flag left set (an update given up or replaced)
-# must boot what slot.txt names: clear it and point tryslot.txt there.
+# must boot what slot.txt names: clear the flag and point tryslot.txt
+# there. Succeeds only if the next boot is shown to be that slot: the flag
+# read back as off (or this system cannot set one), or tryslot.txt read
+# back naming the bootable slot slot.txt names.
 tryboot_disarm() {
-	[ -x "$TRYBOOT" ] && "$TRYBOOT" clear >/dev/null 2>&1
-	if [ -f /boot/tryslot.txt ]; then
-		t=$(boot_target)
-		[ -n "$t" ] && echo "os_prefix=$t/" > /boot/tryslot.txt.new && mv -f /boot/tryslot.txt.new /boot/tryslot.txt
+	flag_off='' try_safe=''
+	if [ ! -x "$TRYBOOT" ] || "$TRYBOOT" clear >/dev/null 2>&1; then flag_off=1; fi
+	t=$(boot_target)
+	if [ -f /boot/tryslot.txt ] && [ -n "$t" ]; then
+		echo "os_prefix=$t/" > /boot/tryslot.txt.new && mv -f /boot/tryslot.txt.new /boot/tryslot.txt
 		sync
+		[ "$(sed -n 's#^os_prefix=\([ab]\)/$#\1#p' /boot/tryslot.txt 2>/dev/null)" = "$t" ] \
+			&& slot_bootable "$t" && try_safe=1
 	fi
-	return 0
+	[ -n "$flag_off" ] || [ -n "$try_safe" ]
 }
 
 # ---- limits and locking ----
@@ -394,11 +400,18 @@ boot_check_try() {
 				return 0
 			fi
 			log "slot $slot failed $tries tries: giving up update $ver"
-			mount_boot || die bootmount
-			tryboot_disarm; unboot_slot "$slot"
-			umount_boot
-			pending_clear
-			progress "error bootfailed $ver" ;;   # not die: the boot goes on
+			# The state is dropped only once no later boot can reach the
+			# failed slot; otherwise it stays, and the next boot (which
+			# never reboots from here) tries this cleanup again.
+			if mount_boot && tryboot_disarm && unboot_slot "$slot"; then
+				umount_boot
+				pending_clear
+				progress "error bootfailed $ver"   # not die: the boot goes on
+			else
+				umount_boot
+				log "cannot make slot $slot unbootable; keeping the update state"
+				progress "error cancelfailed $ver"
+			fi ;;
 	esac
 }
 
@@ -451,8 +464,11 @@ rollback() {
 		# slot.txt still names the old slot: give the update up (also while
 		# its slot is on trial; the next boot is the old slot then)
 		s=$(manifest_get slot "$STATE/pending")
-		tryboot_disarm
-		case $s in a|b) unboot_slot "$s" ;; esac
+		# Report "rolledback" only once the next boot is the old slot and
+		# the given-up one cannot boot; otherwise keep the state.
+		if ! { tryboot_disarm && unboot_slot "$s"; }; then
+			umount_boot; die cancelfailed
+		fi
 		umount_boot
 		pending_clear || die state
 		progress rolledback; return 0

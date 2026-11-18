@@ -21,13 +21,30 @@ trap not_waiting EXIT
 trap 'exit 1' INT TERM
 not_waiting
 
+# The root filesystem is writable only while a package is installed.
+# PICO-8 (and every cart) must never run on a writable system slot, so the
+# session starts only after / is read back as read-only from /proc/mounts.
+root_ro() { awk '$2 == "/" { o = $4 } END { exit !(o ~ /^ro(,|$)/) }' /proc/mounts 2>/dev/null; }
+ensure_root_ro() { root_ro && return 0; sync; mount -o remount,ro / 2>/dev/null; root_ro; }
+
+# finish: exit 0 (pico8-session starts PICO-8) only on a read-only root.
+# Otherwise say so and exit 5; the session is started again later and
+# checks the real mount state once more.
+finish() {
+	ensure_root_ro && exit 0
+	log "/ could not be made read-only again; not starting PICO-8"
+	say "System error: the system partition is still writable. PICO-8 is not started; restart the console."
+	sleep 30
+	exit 5
+}
+
 # install_from SRC -> install_pico8's return code
 install_from() {
 	not_waiting
 	mount -o remount,rw / 2>/dev/null
 	out=$(install_pico8 "$1" "$PICO8_DIR"); rc=$?
 	sync
-	mount -o remount,ro / 2>/dev/null
+	ensure_root_ro || log "$(basename "$1"): remount read-only failed after installing"
 	[ -n "$out" ] && { say "$out"; log "$(basename "$1"): $out"; }
 	return $rc
 }
@@ -54,7 +71,7 @@ if [ -n "$src" ] && [ "$(cat "$PICO8_DIR.meta/source" 2>/dev/null)" != "$(source
 		sleep 5
 	fi
 fi
-is_installed && exit 0
+is_installed && finish
 
 # Nothing usable installed: explain, then keep trying.
 while :; do
@@ -99,12 +116,12 @@ MSG
 	while [ $i -lt 10 ]; do                       # ~30 s per round
 		if scan_usb; then
 			src=$(find_zip)
-			[ -n "$src" ] && { install_from "$src"; rc=$?; [ $rc = 0 ] && exit 0; continue 2; }
+			[ -n "$src" ] && { install_from "$src"; rc=$?; [ $rc = 0 ] && finish; continue 2; }
 		fi
 		sleep 3; i=$((i + 1))
 	done
 	if [ "${rc:-}" = 3 ] && update_pico8_hashes; then
 		src=$(find_folder) || src=$(find_zip)
-		[ -n "$src" ] && { install_from "$src"; rc=$?; [ $rc = 0 ] && exit 0; }
+		[ -n "$src" ] && { install_from "$src"; rc=$?; [ $rc = 0 ] && finish; }
 	fi
 done
