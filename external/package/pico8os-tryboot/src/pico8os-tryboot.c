@@ -14,6 +14,7 @@
  *
  * Exit status: 0 done (set/clear read back as asked), 1 failed, 2 usage.
  */
+#define _POSIX_C_SOURCE 200809L   /* O_CLOEXEC is POSIX.1-2008; -std=c99 hides it */
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
