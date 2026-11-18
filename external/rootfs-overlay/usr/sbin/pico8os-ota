@@ -31,7 +31,8 @@
 #   valid VER | updated VER | uptodate VER | available VER | downloading VER
 #   rolledback | error CODE [args]   (CODE: nofile notupdate unsigned badsig
 #   format board older corrupt nofit write bootmount bootfiles nourl
-#   unreachable badlatest download toolarge nospace busy verifywrite noslot)
+#   unreachable badlatest download toolarge nospace busy verifywrite noslot
+#   state)
 . /usr/lib/pico8os/lib.sh
 load_config
 
@@ -71,12 +72,18 @@ unboot_slot() {
 }
 
 # pending_write SLOT PREVIOUS VERSION TRIES: rewrite + rename, so a power
-# cut never leaves a half-written state.
+# cut never leaves a half-written state. Fails unless every step worked and
+# the file reads back with this slot and count (a full /state or an I/O
+# error must not pass as saved: without it the boots are not counted).
 pending_write() {
-	mkdir -p "$STATE"
-	printf 'slot=%s\nprevious=%s\nversion=%s\ntries=%s\n' "$1" "$2" "$3" "$4" > "$STATE/pending.new"
-	sync; mv "$STATE/pending.new" "$STATE/pending"; sync
+	mkdir -p "$STATE" \
+		&& printf 'slot=%s\nprevious=%s\nversion=%s\ntries=%s\n' "$1" "$2" "$3" "$4" > "$STATE/pending.new" \
+		&& sync && mv -f "$STATE/pending.new" "$STATE/pending" && sync \
+		|| { rm -f "$STATE/pending.new"; return 1; }
+	[ "$(manifest_get slot "$STATE/pending")" = "$1" ] && [ "$(manifest_get tries "$STATE/pending")" = "$4" ]
 }
+# pending_clear: forget the pending update; fails if the file is still there.
+pending_clear() { rm -f "$STATE/pending"; sync; [ ! -e "$STATE/pending" ]; }
 
 manifest_get() { sed -n "s/^$1=//p" "$2" | head -n 1; }
 
@@ -193,6 +200,10 @@ apply() {
 	if [ -f "$STATE/pending" ] && [ "$(manifest_get slot "$STATE/pending")" = "$cur" ]; then
 		die busy
 	fi
+	# The boot tries of the new slot are counted in $STATE/pending: with
+	# /state on the RAM fallback (picostate not mounted) they would be lost
+	# at the reboot, so no update is installed then.
+	state_is_persistent || die state
 	progress verifying
 	verify "$f"
 	ver=$(manifest_get version "$WORK/manifest")
@@ -203,7 +214,7 @@ apply() {
 	mount_boot || die bootmount
 	{ write_slot "$cur" && unboot_slot "$new"; } || { umount_boot; die bootfiles; }
 	umount_boot
-	rm -f "$STATE/pending"; sync
+	pending_clear || die state
 	progress writing "$ver" "$new"
 	write_rootfs "$f" "$part"
 	progress kernel "$new"
@@ -215,8 +226,13 @@ apply() {
 	sync
 	mv "/boot/$new.new" "/boot/$new" || { umount_boot; die bootfiles; }
 	sync
-	pending_write "$new" "$cur" "$ver" 0
-	write_slot "$new" || { rm -f "$STATE/pending"; umount_boot; die bootfiles; }
+	# Only a slot whose tries are counted may be booted. If the state cannot
+	# be saved, keep the running slot and make the new one unbootable, so
+	# not even a manual rollback starts it uncounted.
+	if ! pending_write "$new" "$cur" "$ver" 0; then
+		pending_clear; unboot_slot "$new"; umount_boot; die state
+	fi
+	write_slot "$new" || { pending_clear; umount_boot; die bootfiles; }
 	umount_boot
 	progress ready "$ver"
 }
@@ -244,20 +260,31 @@ boot_check() {
 	fi
 	tries=$((tries + 1))
 	if [ "$tries" -gt "$MAX_TRIES" ]; then
-		log "slot $slot failed $MAX_TRIES boots: rolling back to $prev"
-		mount_boot || die bootmount
-		if ! write_slot "$prev"; then
-			umount_boot
-			log "previous slot $prev cannot boot; staying on $slot"
-			rm -f "$STATE/pending"; sync; return 0
-		fi
-		unboot_slot "$slot"     # running from RAM; its kernel is not needed now
-		umount_boot
-		rm -f "$STATE/pending"; sync
-		reboot; exit 0
+		boot_rollback "slot $slot failed $MAX_TRIES boots"
+	elif ! pending_write "$slot" "$prev" "$ver" "$tries"; then
+		# A try that cannot be counted could repeat forever: treat the
+		# unsaved count like a failed boot and go back now.
+		boot_rollback "cannot save try $tries of slot $slot"
 	fi
-	pending_write "$slot" "$prev" "$ver" "$tries"
 	log "booting new slot $slot (try $tries/$MAX_TRIES)"
+}
+
+# boot_rollback REASON (boot_check, with $slot and $prev): boot $prev again
+# and make $slot unbootable; if $prev cannot boot, stay on $slot.
+boot_rollback() {
+	log "$1: rolling back to $prev"
+	mount_boot || die bootmount
+	if ! write_slot "$prev"; then
+		umount_boot
+		log "previous slot $prev cannot boot; staying on $slot"
+		pending_clear; return 0
+	fi
+	unboot_slot "$slot"     # running from RAM; its kernel is not needed now
+	umount_boot
+	# best effort: on the next boot $slot is not running, so a pending
+	# file left behind is dropped then
+	pending_clear
+	reboot; exit 0
 }
 
 # The new slot works (S99otagood: up for a while with the PICO-8 session
@@ -268,7 +295,9 @@ mark_good() {
 	[ -f "$STATE/pending" ] || return 0
 	[ "$(manifest_get slot "$STATE/pending")" = "$(current_slot)" ] || return 0
 	ver=$(manifest_get version "$STATE/pending")
-	rm -f "$STATE/pending"; sync
+	# left in place, the next boots would count on and roll back a working
+	# system: say so instead of reporting it as done
+	pending_clear || die state
 	log "slot $(current_slot) marked good"
 	progress updated "$ver"
 }
